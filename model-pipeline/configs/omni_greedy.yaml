@@ -1,0 +1,7 @@
+# Omnilingual CTC 300M (v1, sherpa-onnx export), restricted to the Greek columns, greedy decoding.
+model:
+  model_id: omniASR_CTC_300M
+  onnx_path: ~/voicetotext_data/models/omni_ctc_300m/model.onnx
+  omni_foreign: letters   # non-Greek mass -> Greek letters (README.md)
+decoder:
+  kind: greedy

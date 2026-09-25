@@ -1,0 +1,14 @@
+# Omnilingual CTC 300M (v1, sherpa-onnx export, Greek columns) + beam search with the n-gram LM.
+# alpha/beta tuned on FLEURS dev clean for this model (README.md): 0.7 / 3.0, the values the app uses.
+model:
+  model_id: omniASR_CTC_300M
+  onnx_path: ~/voicetotext_data/models/omni_ctc_300m/model.onnx
+  omni_foreign: letters   # non-Greek mass -> Greek letters (README.md)
+decoder:
+  kind: beam
+  n_best: 20
+  beam_width: 128
+  alpha: 0.7
+  beta: 3.0
+  unk_score_offset: -10.0
+  lm_path: ~/voicetotext_data/lm/general_el_300k_p01122.bin   # <lm>.vocab next to it = unigrams

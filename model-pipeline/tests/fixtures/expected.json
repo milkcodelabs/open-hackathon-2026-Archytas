@@ -1,0 +1,32 @@
+{
+  "clip1": {
+    "source_utterance_id": "fleurs_test_3455436210934304490",
+    "source": "google/fleurs/el_gr",
+    "reference": "Αναφέρθηκε στις φήμες ως «πολιτικό κουτσομπολιό και ανοησίες».",
+    "duration_s": 4.86,
+    "greedy": "αναφέρθηκε στις φύμες ως πολιτικό κουτσοπολιό και ανοησίες",
+    "frames": 242,
+    "frame_duration_ms": 20.0,
+    "model_id": "omniASR_CTC_300M+phone:omni.onnx"
+  },
+  "clip2": {
+    "source_utterance_id": "fleurs_test_9937629416585133686",
+    "source": "google/fleurs/el_gr",
+    "reference": "Έτσι ξεχωρίζουν με βάση έναν κανόνα οι ρηματικοί τύποι από τα αντικείμενα.",
+    "duration_s": 5.28,
+    "greedy": "έτσι ξεχωρίνουν μουη βάσι έναν κανώνα ι ρηματικοή τύπι από το αντικίμενα",
+    "frames": 263,
+    "frame_duration_ms": 20.0,
+    "model_id": "omniASR_CTC_300M+phone:omni.onnx"
+  },
+  "clip3": {
+    "source_utterance_id": "fleurs_test_2604539312869094335",
+    "source": "google/fleurs/el_gr",
+    "reference": "Είναι πιο λεπτός κάτω από τις θάλασσες και πιο παχύς κάτω από τα υψίπεδα.",
+    "duration_s": 5.64,
+    "greedy": "είναι πιο λεπτος κάτο από της άλασης και πιο παχής κάτω απότα υψύπεδα",
+    "frames": 281,
+    "frame_duration_ms": 20.0,
+    "model_id": "omniASR_CTC_300M+phone:omni.onnx"
+  }
+}

@@ -1,0 +1,39 @@
+# Default configuration. Every path / model id lives here, not in code.
+model:
+  model_id: omniASR_CTC_300M
+  onnx_path: ~/voicetotext_data/models/omni.onnx   # the phone graph; or the sherpa export (tokens.txt next to it)
+  onnx_threads: null
+  omni_foreign: letters   # sherpa export only: non-Greek mass -> Greek letters
+
+audio:
+  sample_rate: 16000
+
+decoder:
+  kind: greedy            # greedy | beam
+  n_best: 20
+  beam_width: 128
+  alpha: 0.7
+  beta: 3.0
+  lm_path: null           # KenLM binary from `voicetotext lm build`
+  unk_score_offset: -10.0
+
+normalize:
+  strip_accents: null     # null -> follow the CTC vocabulary
+
+lm:
+  order: 5
+  vocab_size: 300000
+  prune: "0 0 1 1 2"
+  max_sentences: {opensubtitles: 15000000, wikipedia: null}
+  digits: verbalize        # verbalize | drop
+  drop_latin_sentences: true
+  max_words_per_sentence: 60
+  quantize_bits: 8
+
+paths:
+  data_dir: ~/voicetotext_data   # overridden by $VOICETOTEXT_DATA_DIR
+  results_dir: null              # -> <data_dir>/results
+  manifests_dir: null            # -> <data_dir>/manifests
+  emissions_cache_dir: null      # -> <data_dir>/emissions_cache (reuse emissions across decoder runs)
+  lm_dir: null                   # -> <data_dir>/lm
+  kenlm_bin: ~/tools/kenlm/build/bin
