@@ -313,10 +313,12 @@ class OverlayService : Service() {
         ring.setColor(c and 0x00FFFFFF or 0x55000000)
     }
 
-    /** Blue/Red/Orange only - the loading state's muted grey-blue never reaches the rectangle. */
+    /** Blue/Red/Orange only - the loading state's muted grey-blue never reaches the rectangle.
+     *  [DOCK_ORANGE] equals [State.THINKING]'s own colour, so transcribing looks the same docked
+     *  as it does on the floating circle. */
     private fun dockedBgColor(s: State): Int = when (s) {
         State.LISTENING -> DOCK_RED
-        State.ERROR -> DOCK_ORANGE
+        State.THINKING, State.ERROR -> DOCK_ORANGE
         else -> DOCK_BLUE
     }
 
