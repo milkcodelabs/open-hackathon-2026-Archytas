@@ -81,16 +81,42 @@ class TypingAccessibilityService : AccessibilityService() {
         val existing = if (node.isShowingHintText) "" else (node.text?.toString() ?: "")
         val sep = if (existing.isEmpty() || existing.endsWith(" ")) "" else " "
         val combined = existing + sep + text
+        return setText(node, combined, combined.length)
+    }
+
+    private fun setText(node: AccessibilityNodeInfo, text: String, cursor: Int): Boolean {
         val args = Bundle().apply {
-            putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, combined)
+            putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, text)
         }
         if (!node.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, args)) return false
         val sel = Bundle().apply {
-            putInt(AccessibilityNodeInfo.ACTION_ARGUMENT_SELECTION_START_INT, combined.length)
-            putInt(AccessibilityNodeInfo.ACTION_ARGUMENT_SELECTION_END_INT, combined.length)
+            putInt(AccessibilityNodeInfo.ACTION_ARGUMENT_SELECTION_START_INT, cursor)
+            putInt(AccessibilityNodeInfo.ACTION_ARGUMENT_SELECTION_END_INT, cursor)
         }
         node.performAction(AccessibilityNodeInfo.ACTION_SET_SELECTION, sel)
         return true
+    }
+
+    /**
+     * Swaps the last occurrence of [old] (what this app typed) for [new], keeping the cursor
+     * where it was relative to the rest of the text, so words typed since then survive.
+     */
+    private fun replace(old: String, new: String): String? {
+        for ((where, node) in listOf("focused" to focusedEditable(), "remembered" to rememberedEditable())) {
+            if (node == null || node.isShowingHintText) continue
+            val text = node.text?.toString() ?: continue
+            val at = text.lastIndexOf(old)
+            if (at < 0) continue
+            val combined = text.substring(0, at) + new + text.substring(at + old.length)
+            val cursor = node.textSelectionStart.takeIf { it in 0..text.length } ?: text.length
+            val moved = when {
+                cursor >= at + old.length -> cursor + new.length - old.length
+                cursor > at -> at + new.length
+                else -> cursor
+            }
+            if (setText(node, combined, moved)) return where
+        }
+        return null
     }
 
     /** Some fields refuse SET_TEXT but accept a paste of the clipboard. */
@@ -144,6 +170,22 @@ class TypingAccessibilityService : AccessibilityService() {
             val cm = ctx.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
             cm.setPrimaryClip(ClipData.newPlainText("greek_vt", text))
             Log.i(TAG, "no editable field, copied to the clipboard")
+            return "clipboard"
+        }
+
+        /**
+         * Changes text delivered earlier: [old] becomes [new] in the field it went to, or on
+         * the clipboard if it cannot be found there any more.
+         */
+        fun replace(ctx: Context, old: String, new: String): String {
+            if (old.isBlank()) return deliver(ctx, new)
+            runCatching { instance?.replace(old, new) }.getOrNull()?.let {
+                Log.i(TAG, "replaced via $it")
+                return "typed"
+            }
+            val cm = ctx.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+            cm.setPrimaryClip(ClipData.newPlainText("greek_vt", new))
+            Log.i(TAG, "typed text not found, copied the correction to the clipboard")
             return "clipboard"
         }
     }

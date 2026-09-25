@@ -2,6 +2,9 @@ package com.openhackathon.voicetotext.service
 
 import com.openhackathon.voicetotext.asr.Recognizer
 import com.openhackathon.voicetotext.audio.AudioRecorder
+import com.openhackathon.voicetotext.decoding.Candidate
+import com.openhackathon.voicetotext.decoding.WordChoices
+import com.openhackathon.voicetotext.llm.LlmCorrector
 import com.openhackathon.voicetotext.R
 import android.animation.ArgbEvaluator
 import android.animation.ValueAnimator
@@ -13,7 +16,9 @@ import android.app.Service
 import android.content.Context
 import android.content.Intent
 import android.content.pm.ServiceInfo
+import android.graphics.Color
 import android.graphics.PixelFormat
+import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
 import android.os.Build
 import android.os.Handler
@@ -26,10 +31,15 @@ import android.view.LayoutInflater
 import android.view.MotionEvent
 import android.view.View
 import android.view.ViewConfiguration
+import android.view.ViewGroup
 import android.view.WindowManager
+import android.view.animation.PathInterpolator
 import android.widget.FrameLayout
+import android.widget.HorizontalScrollView
 import android.widget.ImageView
+import android.widget.LinearLayout
 import android.widget.ProgressBar
+import android.widget.TextView
 import android.widget.Toast
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
@@ -43,6 +53,10 @@ import kotlin.math.abs
  * instead of the mic. Drag it anywhere; it snaps to the nearer side when released.
  * When the software keyboard is open, the circle is swapped for a bar docked on top of it,
  * and swapped back to its previous position when the keyboard closes.
+ * When the typed sentence has words the recognizer was unsure of, the mic in the bar shrinks
+ * to a round button on the right and the alternatives for the first such word slide in beside
+ * it; tapping one rewrites that word in the field, then the next unsure word is offered.
+ * With the LLM switch on and a network, the sentence is first checked by [LlmCorrector].
  */
 class OverlayService : Service() {
 
@@ -60,10 +74,17 @@ class OverlayService : Service() {
     private lateinit var icon: ImageView
     private lateinit var pulse: View
     private lateinit var spinner: ProgressBar
+    private lateinit var strip: HorizontalScrollView
+    private lateinit var chips: LinearLayout
     private lateinit var params: WindowManager.LayoutParams
 
     private val bg = GradientDrawable().apply { shape = GradientDrawable.RECTANGLE }
     private val ring = GradientDrawable().apply { shape = GradientDrawable.OVAL }
+    private val stripBg = GradientDrawable().apply {
+        shape = GradientDrawable.RECTANGLE
+        setColor(0xF21C2033.toInt())
+    }
+    private val ease = PathInterpolator(0.2f, 0f, 0f, 1f)
     private val recorder = AudioRecorder()
     private val main = Handler(Looper.getMainLooper())
     private val argb = ArgbEvaluator()
@@ -81,6 +102,11 @@ class OverlayService : Service() {
     private var pulseAnim: ValueAnimator? = null
     private var longPressed = false
 
+    /** Choice strip: shown while [choice] is open in the bar; progress 0 = full bar, 1 = strip open. */
+    private var optionsShown = false
+    private var optionsProgress = 0f
+    private var optionsAnim: ValueAnimator? = null
+
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onCreate() {
@@ -90,6 +116,7 @@ class OverlayService : Service() {
         wm = getSystemService(Context.WINDOW_SERVICE) as WindowManager
         buildBubble()
         Recognizer.restoreEngine(this)
+        LlmCorrector.restore(this)
         Thread {
             val ok = Recognizer.load(this)
             main.post {
@@ -115,7 +142,7 @@ class OverlayService : Service() {
 
     override fun onDestroy() {
         running = false
-        colorAnim?.cancel(); pulseAnim?.cancel()
+        colorAnim?.cancel(); pulseAnim?.cancel(); optionsAnim?.cancel()
         main.removeCallbacks(imePoll)
         main.removeCallbacks(longPress)
         if (state == State.LISTENING) runCatching { recorder.stop() }
@@ -136,6 +163,7 @@ class OverlayService : Service() {
         circle.background = bg
         pulse.background = ring
         applyColor(State.LOADING.color)
+        buildStrip()
 
         params = WindowManager.LayoutParams(
             bubbleSize(),
@@ -187,9 +215,12 @@ class OverlayService : Service() {
         icon.setImageResource(if (s == State.LISTENING) R.drawable.ic_stop else R.drawable.ic_mic)
         icon.visibility = if (s == State.THINKING) View.GONE else View.VISIBLE
         spinner.visibility = if (s == State.THINKING) View.VISIBLE else View.GONE
-        root.alpha = if (s == State.LOADING) 0.65f else 1f
+        root.alpha = restingAlpha()
         if (s == State.LISTENING) startPulse() else stopPulse()
+        updateOptions()
     }
+
+    private fun restingAlpha() = if (state == State.LOADING) 0.65f else 1f
 
     private fun startPulse() {
         stopPulse()
@@ -198,9 +229,17 @@ class OverlayService : Service() {
             repeatCount = ValueAnimator.INFINITE
             addUpdateListener {
                 val f = it.animatedValue as Float
-                pulse.scaleX = 1f + f * 0.6f
-                pulse.scaleY = 1f + f * 0.6f
-                pulse.alpha = (1f - f) * 0.55f
+                if (docked) {
+                    // the bar window is too short for the ring, so the icon breathes instead
+                    pulse.alpha = 0f
+                    val s = 1f + 0.14f * (1f - abs(2f * f - 1f))
+                    icon.scaleX = s; icon.scaleY = s
+                } else {
+                    pulse.scaleX = 1f + f * 0.6f
+                    pulse.scaleY = 1f + f * 0.6f
+                    pulse.alpha = (1f - f) * 0.55f
+                    icon.scaleX = 1f; icon.scaleY = 1f
+                }
             }
             start()
         }
@@ -209,6 +248,7 @@ class OverlayService : Service() {
     private fun stopPulse() {
         pulseAnim?.cancel(); pulseAnim = null
         pulse.alpha = 0f; pulse.scaleX = 1f; pulse.scaleY = 1f
+        icon.animate().scaleX(1f).scaleY(1f).setDuration(160).start()
     }
 
     private fun bump() {
@@ -224,6 +264,8 @@ class OverlayService : Service() {
     private fun barHeight() = dp(56)
     private fun barMargin() = dp(8)
     private fun barRadius() = dp(16).toFloat()
+    private fun stripGap() = dp(8)
+    private fun chipHeight() = dp(42)
     private fun imeThreshold() = dp(64)
 
     @Suppress("DEPRECATION")
@@ -270,6 +312,7 @@ class OverlayService : Service() {
     private fun checkIme() {
         val kb = keyboardHeight()
         if (kb >= imeThreshold()) {
+            val wasDocked = docked
             if (!docked) {
                 bubbleX = params.x
                 bubbleY = params.y
@@ -278,11 +321,23 @@ class OverlayService : Service() {
             // also re-run while docked: the keyboard can change height (emoji panel, rotation)
             imeHeight = kb
             shapeBar()
+            if (!wasDocked) { morphIn(); updateOptions() }
         } else if (docked) {
             docked = false
             imeHeight = 0
+            choice = null
+            updateOptions()
             shapeCircle()
+            morphIn()
         }
+    }
+
+    /** Softens the instant window swap between circle and bar. */
+    private fun morphIn() {
+        root.alpha = 0f
+        root.animate().alpha(restingAlpha()).setDuration(200).setInterpolator(ease).start()
+        circle.scaleX = 0.94f; circle.scaleY = 0.94f
+        circle.animate().scaleX(1f).scaleY(1f).setStartDelay(0).setDuration(260).setInterpolator(ease).start()
     }
 
     private fun shapeBar() {
@@ -290,7 +345,19 @@ class OverlayService : Service() {
         val h = barHeight()
         val y = (screenH() - imeHeight - h).coerceAtLeast(0)
         placeWindow(barMargin(), y, w, h)
-        shapeInner(w, h, barRadius())
+
+        // the mic slides to the right edge and rounds off into a circle as the strip opens
+        val p = optionsProgress
+        val cw = (w + (h - w) * p).toInt()
+        val radius = barRadius() + (h / 2f - barRadius()) * p
+        shapeInner(cw, h, radius, Gravity.END or Gravity.CENTER_VERTICAL)
+
+        val sw = (w - h - stripGap()).coerceAtLeast(0)
+        val lp = strip.layoutParams
+        if (lp.width != sw) { lp.width = sw; strip.layoutParams = lp }
+        strip.alpha = p
+        strip.translationX = (1f - p) * dp(32)
+        strip.visibility = if (p > 0f) View.VISIBLE else View.GONE
     }
 
     private fun shapeCircle() {
@@ -299,7 +366,8 @@ class OverlayService : Service() {
         val x = bubbleX.coerceIn(0, (screenW() - s).coerceAtLeast(0))
         val y = bubbleY.coerceIn(0, (screenH() - s).coerceAtLeast(0))
         placeWindow(x, y, s, s)
-        shapeInner(circleSize(), circleSize(), circleSize() / 2f)
+        shapeInner(circleSize(), circleSize(), circleSize() / 2f, Gravity.CENTER)
+        strip.visibility = View.GONE
     }
 
     private fun placeWindow(x: Int, y: Int, w: Int, h: Int) {
@@ -311,15 +379,196 @@ class OverlayService : Service() {
         if (root.isAttachedToWindow) runCatching { wm.updateViewLayout(root, params) }
     }
 
-    private fun shapeInner(w: Int, h: Int, radius: Float) {
+    private fun shapeInner(w: Int, h: Int, radius: Float, gravity: Int) {
         val lp = circle.layoutParams as FrameLayout.LayoutParams
-        if (lp.width != w || lp.height != h) {
+        if (lp.width != w || lp.height != h || lp.gravity != gravity) {
             lp.width = w
             lp.height = h
-            lp.gravity = Gravity.CENTER
+            lp.gravity = gravity
             circle.layoutParams = lp
         }
         bg.cornerRadius = radius
+    }
+
+    // ------------------------------------------------------------------ word choices
+
+    /** The sentence as typed and the unsure spots still to offer, left to right. */
+    private class Choice(
+        var words: List<String>,
+        var typed: String,
+        val spots: List<WordChoices.Spot>,
+    ) {
+        var index = 0
+        /** How far earlier picks moved the later spots: a pick can change the word count. */
+        var shift = 0
+        val spot: WordChoices.Spot get() = spots[index]
+    }
+
+    private var choice: Choice? = null
+
+    private fun buildStrip() {
+        chips = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            val pad = (barHeight() - chipHeight()) / 2
+            setPadding(pad, 0, pad, 0)
+        }
+
+        stripBg.cornerRadius = barHeight() / 2f
+        strip = HorizontalScrollView(this).apply {
+            isHorizontalScrollBarEnabled = false
+            overScrollMode = View.OVER_SCROLL_NEVER
+            background = stripBg
+            clipToOutline = true
+            elevation = dp(10).toFloat()
+            alpha = 0f
+            visibility = View.GONE
+            addView(chips, FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.MATCH_PARENT))
+        }
+        root.addView(
+            strip,
+            FrameLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, Gravity.START or Gravity.CENTER_VERTICAL),
+        )
+    }
+
+    /** [current]: what the field holds now, drawn in the bubble's colour with a tick. */
+    private fun makeChip(label: String, current: Boolean, onClick: () -> Unit) = TextView(this).apply {
+        text = if (current) "✓ $label" else label
+        setTextColor(Color.WHITE)
+        textSize = 16f
+        typeface = Typeface.DEFAULT_BOLD
+        gravity = Gravity.CENTER
+        maxLines = 1
+        setPadding(dp(18), 0, dp(18), 0)
+        background = GradientDrawable().apply {
+            cornerRadius = chipHeight() / 2f
+            if (current) {
+                setColor(State.IDLE.color)
+            } else {
+                setColor(0xFF2E3552.toInt())
+                setStroke(dp(1), 0x33FFFFFF)
+            }
+        }
+        layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, chipHeight()).apply {
+            marginStart = dp(3); marginEnd = dp(3)
+        }
+        isClickable = true
+        setOnTouchListener { v, e ->
+            when (e.actionMasked) {
+                MotionEvent.ACTION_DOWN ->
+                    v.animate().scaleX(0.92f).scaleY(0.92f).setStartDelay(0).setDuration(90).start()
+                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL ->
+                    v.animate().scaleX(1f).scaleY(1f).setStartDelay(0).setDuration(160).start()
+            }
+            false
+        }
+        setOnClickListener { onClick() }
+    }
+
+    /** "1/3" before the chips when more than one word is unsure. */
+    private fun makeCounter(label: String) = TextView(this).apply {
+        text = label
+        setTextColor(0x99FFFFFF.toInt())
+        textSize = 13f
+        gravity = Gravity.CENTER
+        setPadding(dp(8), 0, dp(6), 0)
+        layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, chipHeight())
+    }
+
+    private fun fillChips(c: Choice) {
+        chips.removeAllViews()
+        if (c.spots.size > 1) chips.addView(makeCounter("${c.index + 1}/${c.spots.size}"))
+        c.spot.options.forEachIndexed { i, o ->
+            chips.addView(makeChip(o.text.ifEmpty { "(τίποτα)" }, current = i == 0) { onChoose(i) })
+        }
+    }
+
+    /** After a sentence was typed: offer its unsure words, if there are any. */
+    private fun offerChoices(words: List<String>, typed: String, candidates: List<Candidate>) {
+        val spots = WordChoices.find(words, candidates)
+        if (spots.isEmpty() || !docked) { dismissChoice(); return }
+        val c = Choice(words, typed, spots)
+        choice = c
+        fillChips(c)
+        if (optionsShown) revealChips() else updateOptions()
+    }
+
+    /** [i] 0 keeps what was typed; any other option rewrites the spot in the field. */
+    private fun onChoose(i: Int) {
+        val c = choice ?: return
+        val spot = c.spot
+        if (i > 0) {
+            val a = spot.start + c.shift
+            val b = spot.end + c.shift
+            val picked = spot.options[i].words
+            val words = c.words.subList(0, a) + picked + c.words.subList(b, c.words.size)
+            val text = words.joinToString(" ")
+            val where = TypingAccessibilityService.replace(this, c.typed, text)
+            if (where == "clipboard") toast("Αντιγράφηκε: $text")
+            Log.i(TAG, "[choice] $where: ${c.typed} -> $text")
+            c.shift += picked.size - (spot.end - spot.start)
+            c.words = words
+            c.typed = text
+        }
+        c.index++
+        if (c.index < c.spots.size) swapChips(c) else dismissChoice()
+    }
+
+    /** The next unsure word: the old chips slide out to the left, the new ones in from the right. */
+    private fun swapChips(c: Choice) {
+        // the outgoing chips still belong to the previous spot; a second tap must not land on them
+        for (i in 0 until chips.childCount) chips.getChildAt(i).isEnabled = false
+        chips.animate().alpha(0f).translationX(-dp(24).toFloat())
+            .setStartDelay(0).setDuration(150).setInterpolator(ease)
+            .withEndAction {
+                if (choice !== c) return@withEndAction
+                fillChips(c)
+                revealChips()
+            }.start()
+    }
+
+    private fun dismissChoice() {
+        choice = null
+        updateOptions()
+    }
+
+    private fun updateOptions() {
+        val show = docked && state == State.IDLE && choice != null
+        if (show == optionsShown) return
+        optionsShown = show
+        optionsAnim?.cancel()
+        if (!docked) {
+            // the bar is gone, nothing to animate back
+            optionsAnim = null
+            optionsProgress = 0f
+            return
+        }
+        optionsAnim = ValueAnimator.ofFloat(optionsProgress, if (show) 1f else 0f).apply {
+            duration = if (show) 420 else 280
+            interpolator = ease
+            addUpdateListener {
+                optionsProgress = it.animatedValue as Float
+                if (docked) shapeBar()
+            }
+            start()
+        }
+        if (show) revealChips()
+    }
+
+    private fun revealChips() {
+        strip.scrollTo(0, 0)
+        chips.animate().cancel()
+        chips.alpha = 1f
+        chips.translationX = 0f
+        for (i in 0 until chips.childCount) {
+            val c = chips.getChildAt(i)
+            c.animate().cancel()
+            c.alpha = 0f
+            c.translationX = dp(28).toFloat()
+            c.scaleX = 0.9f; c.scaleY = 0.9f
+            c.animate().alpha(1f).translationX(0f).scaleX(1f).scaleY(1f)
+                .setStartDelay(120L + i * 50L).setDuration(340).setInterpolator(ease).start()
+        }
     }
 
     // ------------------------------------------------------------------ touch
@@ -381,8 +630,9 @@ class OverlayService : Service() {
         when (state) {
             State.LOADING -> toast("Φορτώνει το μοντέλο...")
             State.ERROR -> toast(Recognizer.lastError ?: "Το μοντέλο δεν φορτώθηκε")
-            State.IDLE -> runCatching { recorder.start(); setState(State.LISTENING) }
-                .onFailure { toast("Μικρόφωνο: $it") }
+            // speaking again keeps what was typed and closes any open choice
+            State.IDLE -> runCatching { choice = null; recorder.start(); setState(State.LISTENING) }
+                .onFailure { toast("Μικρόφωνο: $it"); updateOptions() }
             State.LISTENING -> transcribe(recorder.stop(), "mic")
             State.THINKING -> {}
         }
@@ -396,6 +646,7 @@ class OverlayService : Service() {
     }
 
     private fun transcribe(wav: FloatArray, id: String) {
+        choice = null
         if (wav.size < AudioRecorder.SAMPLE_RATE / 5) { setState(State.IDLE); toast("Πολύ σύντομο"); return }
         setState(State.THINKING)
         Thread {
@@ -403,14 +654,27 @@ class OverlayService : Service() {
             // before the result is typed, so it never includes the new words)
             val context = TypingAccessibilityService.contextBefore()
             val r = runCatching { Recognizer.recognize(wav, id, context) }
+            // layer 3 only when switched on and online; on any failure its words are empty
+            val llm = r.getOrNull()
+                ?.takeIf { it.text.isNotBlank() && LlmCorrector.shouldRun(this) }
+                ?.let { LlmCorrector.refine(it) }
             main.post {
                 setState(State.IDLE)
                 r.onSuccess { res ->
-                    val where = TypingAccessibilityService.deliver(this, res.text)
-                    if (res.text.isBlank()) toast("Δεν αναγνωρίστηκε τίποτα")
-                    else if (where == "clipboard") toast("Αντιγράφηκε: ${res.text}")
-                    else toast(res.text)
-                    Log.i(TAG, "[$id] $where: ${res.text} (${res.inferenceMs} ms)")
+                    val words = llm?.words?.takeIf { it.isNotEmpty() }
+                        ?: res.candidates.firstOrNull()?.words
+                        ?: res.text.split(' ').filter { it.isNotBlank() }
+                    val text = words.joinToString(" ")
+                    val where = TypingAccessibilityService.deliver(this, text)
+                    when {
+                        text.isBlank() -> toast("Δεν αναγνωρίστηκε τίποτα")
+                        where == "clipboard" -> toast("Αντιγράφηκε: $text")
+                        // docked, the text is in the field right above and a toast would cover the choices
+                        !docked -> toast(text)
+                    }
+                    val via = llm?.let { " via ${it.provider.label} ${it.ms} ms" + (it.error?.let { e -> " (kept: $e)" } ?: "") } ?: ""
+                    Log.i(TAG, "[$id] $where: $text (${res.inferenceMs} ms$via)")
+                    if (where == "typed") offerChoices(words, text, res.candidates)
                 }.onFailure { toast("Σφάλμα: $it") }
             }
         }.start()

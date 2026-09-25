@@ -20,6 +20,7 @@ import androidx.core.content.ContextCompat
 import androidx.lifecycle.lifecycleScope
 import com.openhackathon.voicetotext.asr.Recognizer
 import com.openhackathon.voicetotext.audio.AudioRecorder
+import com.openhackathon.voicetotext.llm.LlmCorrector
 import com.openhackathon.voicetotext.models.ModelDownloader
 import com.openhackathon.voicetotext.service.OverlayService
 import com.openhackathon.voicetotext.service.TypingAccessibilityService
@@ -94,6 +95,7 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         Recognizer.restoreEngine(this)
+        LlmCorrector.restore(this)
 
         // Models missing and on Wi-Fi: fetch them straight away. On mobile data, wait for
         // the button, since it is almost half a gigabyte.
@@ -136,6 +138,10 @@ class MainActivity : ComponentActivity() {
             neuralPresent = Recognizer.neuralPresent(this),
             neuralOn = Recognizer.useNeuralLm,
             neuralMb = Recognizer.neuralSizeMb(this),
+            llmOn = LlmCorrector.enabled,
+            llmProvider = LlmCorrector.provider,
+            llmKeys = LlmCorrector.Provider.entries.filter { LlmCorrector.hasKey(it) }.toSet(),
+            online = LlmCorrector.online(this),
             bubbleOn = OverlayService.running,
             recording = recording,
             busy = busy,
@@ -201,6 +207,17 @@ class MainActivity : ComponentActivity() {
             }
         }
 
+        // the bubble reads the same object, so it follows these at its next recognition
+        override fun setLlm(on: Boolean) {
+            LlmCorrector.setEnabled(this@MainActivity, on)
+            tick++
+        }
+
+        override fun selectLlmProvider(p: LlmCorrector.Provider) {
+            LlmCorrector.setProvider(this@MainActivity, p)
+            tick++
+        }
+
         override fun runCheck() = this@MainActivity.runCheck()
 
         override fun download() = startDownload()
@@ -264,8 +281,15 @@ class MainActivity : ComponentActivity() {
             return@launch
         }
         val res = runCatching { withContext(Dispatchers.Default) { Recognizer.recognize(wav, "panel") } }
+        res.getOrNull()?.let { refineIfOn(it) }
         busy = false
         res.onSuccess { show(it) }.onFailure { result = "Σφάλμα: $it" }
+    }
+
+    /** The online check, when switched on; its exchange shows in the correction card. */
+    private suspend fun refineIfOn(res: Recognizer.Result) {
+        if (res.text.isBlank() || !LlmCorrector.shouldRun(this)) return
+        withContext(Dispatchers.IO) { LlmCorrector.refine(res) }
     }
 
     /**
@@ -289,6 +313,7 @@ class MainActivity : ComponentActivity() {
             if (!ok) { result = Recognizer.lastError ?: "Αποτυχία φόρτωσης"; return@launch }
             val wav = AudioRecorder.readWav(Recognizer.testWav(this@MainActivity))
             val res = withContext(Dispatchers.Default) { Recognizer.recognize(wav, "test.wav") }
+            refineIfOn(res)
             show(res)
         }
     }

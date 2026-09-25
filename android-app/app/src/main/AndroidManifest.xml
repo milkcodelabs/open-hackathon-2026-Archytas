@@ -7,7 +7,8 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
-    <!-- Only for downloading the models from GitHub Releases. Audio never leaves the phone. -->
+    <!-- For downloading the models from GitHub Releases and, only when the user turns it on,
+         sending the recognized text (never the audio) to an LLM for correction. -->
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-feature android:name="android.hardware.microphone" android:required="false" />

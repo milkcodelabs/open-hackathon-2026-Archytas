@@ -1,7 +1,17 @@
+import java.util.Properties
+
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.compose)
 }
+
+// API keys for the optional LLM correction: local.properties (never committed) or the environment.
+val localProps = Properties().apply {
+    val f = rootProject.file("local.properties")
+    if (f.exists()) f.inputStream().use { load(it) }
+}
+fun secret(name: String): String =
+    (localProps.getProperty(name) ?: System.getenv(name) ?: "").trim().replace("\"", "")
 
 android {
     namespace = "com.openhackathon.voicetotext"
@@ -19,6 +29,9 @@ android {
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         // ONNX Runtime ships native code; the target phones are arm64 (keeps the APK ~25 MB)
         ndk { abiFilters += listOf("arm64-v8a") }
+
+        buildConfigField("String", "GEMINI_API_KEY", "\"${secret("GEMINI_API_KEY")}\"")
+        buildConfigField("String", "GROQ_API_KEY", "\"${secret("GROQ_API_KEY")}\"")
     }
 
     buildTypes {
@@ -34,6 +47,7 @@ android {
     }
     buildFeatures {
         compose = true
+        buildConfig = true
     }
 }
 

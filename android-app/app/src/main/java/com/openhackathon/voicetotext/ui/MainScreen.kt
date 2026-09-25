@@ -69,6 +69,7 @@ import com.openhackathon.voicetotext.R
 import com.openhackathon.voicetotext.asr.Recognizer
 import com.openhackathon.voicetotext.decoding.Candidate
 import com.openhackathon.voicetotext.decoding.Candidates
+import com.openhackathon.voicetotext.llm.LlmCorrector
 import com.openhackathon.voicetotext.models.ModelDownloader
 import com.openhackathon.voicetotext.ui.theme.Bg
 import com.openhackathon.voicetotext.ui.theme.Brand
@@ -97,6 +98,11 @@ data class ScreenState(
     val neuralPresent: Boolean,
     val neuralOn: Boolean,
     val neuralMb: Long,
+    val llmOn: Boolean,
+    val llmProvider: LlmCorrector.Provider,
+    /** Providers whose API key was built into the app. */
+    val llmKeys: Set<LlmCorrector.Provider>,
+    val online: Boolean,
     val bubbleOn: Boolean,
     val recording: Boolean,
     val busy: Boolean,
@@ -121,6 +127,8 @@ interface MainActions {
     fun selectEngine(e: Recognizer.Engine)
     fun setLanguageModel(on: Boolean)
     fun setNeuralLm(on: Boolean)
+    fun setLlm(on: Boolean)
+    fun selectLlmProvider(p: LlmCorrector.Provider)
     fun runCheck()
     fun download()
     fun cancelDownload()
@@ -140,6 +148,7 @@ fun MainScreen(state: ScreenState, actions: MainActions) {
         CandidatesCard(state)
         ModelsCard(state, actions)
         EngineCard(state, actions)
+        LlmCard(state, actions)
         PermissionsCard(state, actions)
         SpeakerCard(state)
         CheckCard(state, actions)
@@ -456,6 +465,81 @@ private fun EngineCard(state: ScreenState, actions: MainActions) {
                     checked = state.neuralOn && state.neuralPresent && state.lmOn,
                     onCheckedChange = { actions.setNeuralLm(it) },
                     enabled = state.neuralPresent && state.lmOn,
+                )
+            }
+        }
+    }
+}
+
+// ---------------------------------------------------------------------- online correction
+
+/**
+ * The optional online check: a switch, which service answers, and the last exchange (what
+ * was sent, what came back, how long it took) so the effect can be judged.
+ */
+@Composable
+private fun LlmCard(state: ScreenState, actions: MainActions) {
+    val last by LlmCorrector.last.collectAsState()
+    val hasKey = state.llmProvider in state.llmKeys
+    Section("Διόρθωση στο διαδίκτυο") {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)) {
+                Text("Έλεγχος από γλωσσικό μοντέλο (LLM)", fontSize = 16.sp, color = OnBg)
+                Text(
+                    when {
+                        !hasKey -> "Λείπει το κλειδί API για το ${state.llmProvider.label}."
+                        !state.llmOn -> "Ανενεργό. Όλα γίνονται στο κινητό."
+                        !state.online -> "Ενεργό, αλλά χωρίς σύνδεση: γράφεται ό,τι βρει το κινητό."
+                        else -> "Ενεργό. Στέλνει μόνο το κείμενο, ποτέ τον ήχο, και γράφει την πρόταση που βγάζει νόημα."
+                    },
+                    fontSize = 14.sp, color = OnMuted,
+                )
+            }
+            Switch(
+                checked = state.llmOn && hasKey,
+                onCheckedChange = { actions.setLlm(it) },
+                enabled = hasKey,
+            )
+        }
+        Spacer(Modifier.height(12.dp))
+        val providers = LlmCorrector.Provider.entries
+        SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
+            providers.forEachIndexed { i, p ->
+                SegmentedButton(
+                    selected = state.llmProvider == p,
+                    onClick = { actions.selectLlmProvider(p) },
+                    shape = SegmentedButtonDefaults.itemShape(i, providers.size),
+                    modifier = Modifier.height(54.dp),
+                ) {
+                    Text(if (p in state.llmKeys) p.label else "${p.label} (χωρίς κλειδί)", fontSize = 14.sp, maxLines = 1)
+                }
+            }
+        }
+        Text(
+            "${state.llmProvider.model}. Το κλειδί μπαίνει στο local.properties ως " +
+                (if (state.llmProvider == LlmCorrector.Provider.GEMINI) "GEMINI_API_KEY" else "GROQ_API_KEY") +
+                " και χρειάζεται νέο build.",
+            fontSize = 13.sp, color = OnMuted, modifier = Modifier.padding(top = 8.dp),
+        )
+        last?.let { o ->
+            Spacer(Modifier.height(12.dp))
+            Column(
+                Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(14.dp))
+                    .background(SurfaceSoft)
+                    .padding(14.dp),
+            ) {
+                Text("${o.provider.label}  ·  ${o.ms} ms", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = OnBg)
+                if (o.sent.isNotEmpty()) {
+                    Text(o.sent, fontSize = 13.sp, fontFamily = FontFamily.Monospace, color = OnMuted,
+                        modifier = Modifier.padding(top = 6.dp))
+                }
+                Text(
+                    o.text?.let { "→ $it" } ?: "Κράτησε το αποτέλεσμα του κινητού: ${o.error}",
+                    fontSize = 17.sp, fontWeight = FontWeight.SemiBold,
+                    color = if (o.text != null) Ok else Listening,
+                    modifier = Modifier.padding(top = 8.dp),
                 )
             }
         }
