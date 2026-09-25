@@ -5,7 +5,11 @@ import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.Context
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -14,6 +18,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.foundation.layout.size
@@ -39,6 +44,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -47,15 +53,20 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.openhackathon.voicetotext.R
 import com.openhackathon.voicetotext.asr.Recognizer
+import com.openhackathon.voicetotext.decoding.Candidate
 import com.openhackathon.voicetotext.models.ModelDownloader
 import com.openhackathon.voicetotext.ui.theme.Bg
 import com.openhackathon.voicetotext.ui.theme.Brand
@@ -65,6 +76,7 @@ import com.openhackathon.voicetotext.ui.theme.Ok
 import com.openhackathon.voicetotext.ui.theme.OnBg
 import com.openhackathon.voicetotext.ui.theme.OnMuted
 import com.openhackathon.voicetotext.ui.theme.Surface
+import com.openhackathon.voicetotext.ui.theme.SurfaceSoft
 import com.openhackathon.voicetotext.ui.theme.Thinking
 import java.util.Locale
 
@@ -119,6 +131,7 @@ fun MainScreen(state: ScreenState, actions: MainActions) {
         verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
         Hero(state, actions)
+        CandidatesCard(state)
         ModelsCard(state, actions)
         EngineCard(state, actions)
         PermissionsCard(state, actions)
@@ -204,6 +217,98 @@ private fun Hero(state: ScreenState, actions: MainActions) {
     }
 }
 
+// ---------------------------------------------------------------------- candidates
+
+/**
+ * The best sentences the decoder found for the last recognition (from the panel or the
+ * bubble), best first. The chosen one is shown large; tapping another chooses it. Words that
+ * differ from the best sentence are highlighted so the alternatives can be read at a glance.
+ */
+@Composable
+private fun CandidatesCard(state: ScreenState) {
+    val last by Recognizer.lastResult.collectAsState()
+    val res = last ?: return
+    val candidates = res.candidates
+    if (candidates.isEmpty()) return
+    var chosen by remember(res) { mutableIntStateOf(0) }
+    var copied by remember(res) { mutableStateOf(false) }
+    val context = LocalContext.current
+    val pick = candidates[chosen.coerceIn(0, candidates.lastIndex)]
+
+    Section("Πιθανές προτάσεις") {
+        Text(pick.text, fontSize = 24.sp, fontWeight = FontWeight.SemiBold, color = OnBg, lineHeight = 30.sp)
+        Spacer(Modifier.height(10.dp))
+        Button(
+            onClick = {
+                val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                cm.setPrimaryClip(ClipData.newPlainText("voice-to-text", pick.text))
+                copied = true
+            },
+            modifier = Modifier.fillMaxWidth().height(52.dp),
+            shape = RoundedCornerShape(16.dp),
+        ) { Text(if (copied) "Αντιγράφηκε" else "Αντιγραφή", fontSize = 16.sp) }
+
+        if (candidates.size > 1) {
+            Spacer(Modifier.height(14.dp))
+            Text("Πάτα μια πρόταση για να την επιλέξεις:", fontSize = 14.sp, color = OnMuted)
+            Spacer(Modifier.height(8.dp))
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                candidates.forEachIndexed { i, c ->
+                    CandidateRow(rank = i + 1, candidate = c, selected = i == chosen) {
+                        chosen = i
+                        copied = false
+                    }
+                }
+            }
+        } else if (!state.lmOn) {
+            Spacer(Modifier.height(10.dp))
+            Text("Άνοιξε το γλωσσικό μοντέλο για να βλέπεις εναλλακτικές προτάσεις.", fontSize = 14.sp, color = OnMuted)
+        }
+    }
+}
+
+@Composable
+private fun CandidateRow(rank: Int, candidate: Candidate, selected: Boolean, onClick: () -> Unit) {
+    val text = buildAnnotatedString {
+        candidate.words.forEachIndexed { i, w ->
+            if (i > 0) append(" ")
+            if (i in candidate.changed) {
+                withStyle(SpanStyle(color = Thinking, fontWeight = FontWeight.Bold)) { append(w) }
+            } else {
+                append(w)
+            }
+        }
+    }
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier
+            .fillMaxWidth()
+            .heightIn(min = 56.dp)
+            .clip(RoundedCornerShape(14.dp))
+            .background(if (selected) Brand.copy(alpha = 0.22f) else SurfaceSoft)
+            .border(
+                width = if (selected) 2.dp else 0.dp,
+                color = if (selected) Brand else SurfaceSoft,
+                shape = RoundedCornerShape(14.dp),
+            )
+            .clickable(onClick = onClick)
+            .padding(horizontal = 14.dp, vertical = 10.dp)
+            .semantics { contentDescription = "πρόταση $rank: ${candidate.text}" },
+    ) {
+        Text("$rank", fontSize = 16.sp, fontWeight = FontWeight.Bold,
+            color = if (selected) Brand else OnMuted, modifier = Modifier.width(26.dp))
+        Text(text, fontSize = 17.sp, color = OnBg, modifier = Modifier.weight(1f))
+        Spacer(Modifier.width(10.dp))
+        Text(percent(candidate.probability), fontSize = 14.sp, color = OnMuted)
+    }
+}
+
+private fun percent(p: Float): String = when {
+    p >= 0.995f -> ">99%"
+    p < 0.01f -> "<1%"
+    else -> "${(p * 100).toInt()}%"
+}
+
 // ---------------------------------------------------------------------- models
 
 @Composable
@@ -278,7 +383,6 @@ private fun EngineCard(state: ScreenState, actions: MainActions) {
         val options = listOf(
             Recognizer.Engine.OMNI to "Omnilingual",
             Recognizer.Engine.CTC to "wav2vec2",
-            Recognizer.Engine.WHISPER to "Whisper",
         )
         SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
             options.forEachIndexed { i, (e, label) ->
@@ -298,18 +402,15 @@ private fun EngineCard(state: ScreenState, actions: MainActions) {
         Text(
             when (state.engine) {
                 Recognizer.Engine.OMNI ->
-                    "Το κύριο μοντέλο. Αναφέρει ό,τι αρθρώθηκε όπως το wav2vec2, αλλά με τρεις " +
-                        "φορές λιγότερα λάθη σε καθαρή ομιλία (FLEURS)."
+                    "Το κύριο μοντέλο. Τρεις φορές λιγότερα λάθη από το wav2vec2 σε " +
+                        "καθημερινή ομιλία (FLEURS)."
                 Recognizer.Engine.CTC ->
-                    "Αναφέρει ό,τι αρθρώθηκε. Λιγότερο ακριβές, αλλά τα λάθη του φαίνονται και " +
-                        "είναι το μόνο που μπορεί να μάθει τη φωνή σου."
-                Recognizer.Engine.WHISPER ->
-                    "Πολύ πιο ακριβές σε καθαρή ομιλία. Όταν κάνει λάθος όμως γράφει σωστές " +
-                        "ελληνικές λέξεις που δεν είπες, και δεν μαθαίνει τη φωνή σου."
+                    "Ελληνικό wav2vec2. Καλύτερο σε ηχογραφήσεις τύπου Common Voice, " +
+                        "λιγότερο ακριβές σε καθημερινή ομιλία."
             },
             fontSize = 14.sp, color = OnMuted, modifier = Modifier.padding(top = 8.dp),
         )
-        if (state.engine != Recognizer.Engine.WHISPER) {
+        run {
             Spacer(Modifier.height(12.dp))
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Column(Modifier.weight(1f)) {

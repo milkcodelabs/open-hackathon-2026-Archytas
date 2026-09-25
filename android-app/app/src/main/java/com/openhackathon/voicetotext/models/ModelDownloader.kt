@@ -41,7 +41,7 @@ object ModelDownloader {
 
     class ModelFile(val name: String, val bytes: Long, val sha256: String, val what: String)
 
-    /** What the default engine (Omnilingual + layer 2) needs. wav2vec2 and Whisper stay optional. */
+    /** What the default engine (Omnilingual + layer 2) needs. wav2vec2 stays optional (import). */
     val FILES = listOf(
         ModelFile("omni.onnx", 365_353_615L,
             "6ae7949b48ecc0658970a473e4c1526544b206464aa8682e8a5e24f04ac66798", "ακουστικό μοντέλο"),
