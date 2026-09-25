@@ -20,10 +20,14 @@ import android.view.accessibility.AccessibilityNodeInfo
  * It looks at nothing else and stores nothing but that one node reference. The text already
  * in that field (at most the last 200 characters before the cursor) is read at the moment of
  * recognition so the language model can continue the sentence; it is not stored or logged.
+ * For undo it also keeps, in memory only, the last few phrases it typed itself.
  */
 class TypingAccessibilityService : AccessibilityService() {
 
     @Volatile private var lastEditable: AccessibilityNodeInfo? = null
+
+    /** What each insert put in the field, separator included, newest last; only our own text. */
+    private val injected = ArrayDeque<String>()
 
     override fun onServiceConnected() {
         instance = this
@@ -56,6 +60,7 @@ class TypingAccessibilityService : AccessibilityService() {
     override fun onDestroy() {
         if (instance === this) instance = null
         lastEditable = null
+        synchronized(injected) { injected.clear() }
         super.onDestroy()
     }
 
@@ -77,11 +82,12 @@ class TypingAccessibilityService : AccessibilityService() {
         return if (runCatching { n.refresh() }.getOrDefault(false) && n.isEditable) n else null
     }
 
-    private fun append(node: AccessibilityNodeInfo, text: String): Boolean {
+    /** What was added to the field (the separator and [text]), or null if it refused. */
+    private fun append(node: AccessibilityNodeInfo, text: String): String? {
         val existing = if (node.isShowingHintText) "" else (node.text?.toString() ?: "")
         val sep = if (existing.isEmpty() || existing.endsWith(" ")) "" else " "
         val combined = existing + sep + text
-        return setText(node, combined, combined.length)
+        return if (setText(node, combined, combined.length)) sep + text else null
     }
 
     private fun setText(node: AccessibilityNodeInfo, text: String, cursor: Int): Boolean {
@@ -137,15 +143,36 @@ class TypingAccessibilityService : AccessibilityService() {
     }
 
     private fun insert(text: String): String? {
-        focusedEditable()?.let {
-            if (append(it, text)) return "focused"
-            if (paste(it, text)) return "focused/paste"
-        }
-        rememberedEditable()?.let {
-            if (append(it, text)) return "remembered"
-            if (paste(it, text)) return "remembered/paste"
+        for ((where, node) in listOf("focused" to focusedEditable(), "remembered" to rememberedEditable())) {
+            if (node == null) continue
+            append(node, text)?.let { remember(it); return where }
+            if (paste(node, text)) { remember(text); return "$where/paste" }
         }
         return null
+    }
+
+    private fun remember(piece: String) = synchronized(injected) {
+        injected.addLast(piece)
+        while (injected.size > UNDO_DEPTH) injected.removeFirst()
+    }
+
+    /** A phrase we typed was rewritten (word choice, late LLM answer): undo must remove the new words. */
+    private fun rememberReplaced(old: String, new: String) = synchronized(injected) {
+        val last = injected.lastOrNull() ?: return
+        if (last.endsWith(old)) injected[injected.size - 1] = last.dropLast(old.length) + new
+    }
+
+    private fun hasUndo() = synchronized(injected) { injected.isNotEmpty() }
+
+    /**
+     * Removes the newest phrase we typed from the field, wherever it now sits, keeping the
+     * cursor on the same text. A phrase no longer found (edited, or another field) is forgotten.
+     */
+    private fun undo(): String {
+        val piece = synchronized(injected) { injected.removeLastOrNull() } ?: return "nothing"
+        // the field may have trimmed the separator in front of it
+        val where = replace(piece, "") ?: piece.trimStart().takeIf { it != piece }?.let { replace(it, "") }
+        return if (where != null) "undone" else "missing"
     }
 
     companion object {
@@ -156,6 +183,21 @@ class TypingAccessibilityService : AccessibilityService() {
 
         /** Enough characters for the last words of the sentence; nothing more is read. */
         private const val CONTEXT_CHARS = 200
+        /** How many of our own phrases can be undone one after another. */
+        private const val UNDO_DEPTH = 20
+
+        val canUndo: Boolean get() = instance?.hasUndo() == true
+
+        /**
+         * Takes the last phrase this app typed back out of the field it went to. Returns
+         * "undone", "missing" (the text is no longer there) or "nothing" (nothing to undo).
+         */
+        fun undoLastInjection(): String {
+            val s = instance ?: return "nothing"
+            val r = runCatching { s.undo() }.getOrDefault("missing")
+            Log.i(TAG, "undo: $r")
+            return r
+        }
 
         /**
          * The text already written before the cursor in the field being typed into, for the
@@ -180,6 +222,7 @@ class TypingAccessibilityService : AccessibilityService() {
         fun replace(ctx: Context, old: String, new: String, copyIfMissing: Boolean = true): String {
             if (old.isBlank()) return deliver(ctx, new)
             runCatching { instance?.replace(old, new) }.getOrNull()?.let {
+                instance?.rememberReplaced(old, new)
                 Log.i(TAG, "replaced via $it")
                 return "typed"
             }

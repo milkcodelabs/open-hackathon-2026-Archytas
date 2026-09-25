@@ -1,11 +1,23 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!-- The floating microphone. The frame is deliberately larger than the visible circle:
-     the target user has limited motor control, so the touch area is generous. -->
+     the target user has limited motor control, so the touch area is generous.
+     Docked above the keyboard, the same views become a bar: Undo pinned to the far left,
+     the mic pinned to the far right (both at least 48dp square), and nothing tappable in
+     between. The docked sizes and gravities are applied from OverlayService.shapeBar(). -->
 <FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="96dp"
     android:layout_height="96dp"
     android:clipChildren="false"
     android:clipToPadding="false">
+
+    <!-- Docked only: the bar's backdrop, so the empty middle reads as part of the bar. -->
+    <View
+        android:id="@+id/dock_track"
+        android:layout_width="match_parent"
+        android:layout_height="56dp"
+        android:layout_gravity="bottom"
+        android:importantForAccessibility="no"
+        android:visibility="gone" />
 
     <View
         android:id="@+id/pulse"
@@ -15,12 +27,58 @@
         android:alpha="0"
         android:background="@drawable/bubble_ring" />
 
+    <!-- Floating only: slides out from behind the circle after text is typed. Lower
+         elevation than the circle, so it is hidden behind it while retracted. -->
+    <FrameLayout
+        android:id="@+id/undo_satellite"
+        android:layout_width="48dp"
+        android:layout_height="48dp"
+        android:layout_gravity="top|start"
+        android:clickable="true"
+        android:contentDescription="αναίρεση"
+        android:elevation="6dp"
+        android:focusable="false"
+        android:visibility="gone">
+
+        <ImageView
+            android:layout_width="22dp"
+            android:layout_height="22dp"
+            android:layout_gravity="center"
+            android:importantForAccessibility="no"
+            android:src="@drawable/ic_undo" />
+    </FrameLayout>
+
+    <!-- Docked only: the permanent Undo button at the far left of the bar. -->
+    <FrameLayout
+        android:id="@+id/undo_button"
+        android:layout_width="56dp"
+        android:layout_height="56dp"
+        android:layout_gravity="start|bottom"
+        android:clickable="true"
+        android:contentDescription="αναίρεση"
+        android:elevation="10dp"
+        android:focusable="false"
+        android:minWidth="48dp"
+        android:minHeight="48dp"
+        android:visibility="gone">
+
+        <ImageView
+            android:layout_width="26dp"
+            android:layout_height="26dp"
+            android:layout_gravity="center"
+            android:importantForAccessibility="no"
+            android:src="@drawable/ic_undo" />
+    </FrameLayout>
+
+    <!-- The mic: centred in the floating frame; docked, pinned to end|bottom from code. -->
     <FrameLayout
         android:id="@+id/circle"
         android:layout_width="68dp"
         android:layout_height="68dp"
         android:layout_gravity="center"
-        android:elevation="10dp">
+        android:elevation="10dp"
+        android:minWidth="48dp"
+        android:minHeight="48dp">
 
         <ImageView
             android:id="@+id/icon"
@@ -38,4 +96,16 @@
             android:indeterminateTint="#FFFFFF"
             android:visibility="gone" />
     </FrameLayout>
+
+    <!-- Whole-sentence suggestions when the recognizer was unsure; sized and placed from code,
+         beside the circle or above the docked bar. -->
+    <LinearLayout
+        android:id="@+id/suggestions"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="top|start"
+        android:elevation="10dp"
+        android:orientation="vertical"
+        android:padding="6dp"
+        android:visibility="gone" />
 </FrameLayout>

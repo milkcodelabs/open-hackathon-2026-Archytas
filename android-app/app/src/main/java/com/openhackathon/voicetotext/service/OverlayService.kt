@@ -25,6 +25,7 @@ import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
 import android.os.SystemClock
+import android.text.TextUtils
 import android.util.DisplayMetrics
 import android.util.Log
 import android.view.Gravity
@@ -57,12 +58,18 @@ import kotlin.math.abs
  * instead of the mic. Drag it anywhere; it snaps to the nearer side when released.
  * When the software keyboard is open, the circle is swapped for a bar docked on top of it,
  * and swapped back to its previous position when the keyboard closes.
- * When the typed sentence has words the recognizer was unsure of, the mic in the bar shrinks
- * to a round button on the right and the alternatives for the first such word slide in beside
- * it; tapping one rewrites that word in the field, then the next unsure word is offered.
+ * The bar keeps its two targets in the corners, Undo far left and the mic far right, with
+ * nothing tappable between them. Floating, a small Undo bubble slides out from behind the
+ * circle after each typed sentence and tucks itself back after a few seconds or on the next tap.
+ * When the typed sentence has words the recognizer was unsure of, the alternatives for the
+ * first such word slide in between the two buttons; tapping one rewrites that word in the
+ * field, then the next unsure word is offered.
  * With the LLM switch on and a network, the sentence is first checked by [LlmCorrector]; if
  * it is slow, the phone's sentence is typed at once (a ring spins around the mic) and the
  * answer replaces it when it comes, with the phone's words offered back as the alternative.
+ * When the best sentence is less likely than [CONFIDENCE_THRESHOLD], nothing is typed: the
+ * overlay grows to show the best few sentences (beside the circle, or above the bar) and the
+ * tapped one is typed, after which the window shrinks back to exactly where it was.
  */
 class OverlayService : Service() {
 
@@ -82,6 +89,10 @@ class OverlayService : Service() {
     private lateinit var spinner: ProgressBar
     private lateinit var strip: HorizontalScrollView
     private lateinit var chips: LinearLayout
+    private lateinit var suggestionBox: LinearLayout
+    private lateinit var dockTrack: View
+    private lateinit var undoButton: FrameLayout
+    private lateinit var undoSatellite: FrameLayout
     private lateinit var params: WindowManager.LayoutParams
 
     private val bg = GradientDrawable().apply { shape = GradientDrawable.RECTANGLE }
@@ -89,6 +100,14 @@ class OverlayService : Service() {
     private val stripBg = GradientDrawable().apply {
         shape = GradientDrawable.RECTANGLE
         setColor(0xF21C2033.toInt())
+    }
+    private val panelBg = GradientDrawable().apply {
+        shape = GradientDrawable.RECTANGLE
+        setColor(0xF21C2033.toInt())
+    }
+    private val trackBg = GradientDrawable().apply {
+        shape = GradientDrawable.RECTANGLE
+        setColor(0x661C2033)
     }
     private val ease = PathInterpolator(0.2f, 0f, 0f, 1f)
     private val recorder = AudioRecorder()
@@ -126,6 +145,24 @@ class OverlayService : Service() {
     private var lastTyped: Typed? = null
     private var llmPending = false
     private val llmPool = Executors.newCachedThreadPool()
+
+    /** Sentences offered instead of typing, best first; empty while the panel is closed. */
+    private var suggestions: List<Candidate> = emptyList()
+    private var suggestionRes: Recognizer.Result? = null
+    private var suggestionFor = 0
+    /** How far the docked bar window grows upward to hold the panel. */
+    private var panelExtra = 0
+    /**
+     * The circle window (x, y, width, height) before the suggestion panel or the Undo satellite
+     * widened it; null when not widened.
+     */
+    private var circleRest: IntArray? = null
+
+    /** The Undo satellite is out (or sliding out); [satDx], [satDy]: its offset from the circle. */
+    private var satelliteShown = false
+    private var satDx = 0
+    private var satDy = 0
+    private val retractSatellite = Runnable { hideSatellite(animate = true) }
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -166,6 +203,7 @@ class OverlayService : Service() {
         llmPool.shutdownNow()
         main.removeCallbacks(imePoll)
         main.removeCallbacks(longPress)
+        main.removeCallbacks(retractSatellite)
         if (state == State.LISTENING) runCatching { recorder.stop() }
         runCatching { wm.removeView(root) }
         super.onDestroy()
@@ -181,8 +219,22 @@ class OverlayService : Service() {
         icon = root.findViewById(R.id.icon)
         pulse = root.findViewById(R.id.pulse)
         spinner = root.findViewById(R.id.spinner)
+        suggestionBox = root.findViewById(R.id.suggestions)
         circle.background = bg
         pulse.background = ring
+        panelBg.cornerRadius = dp(20).toFloat()
+        suggestionBox.background = panelBg
+        dockTrack = root.findViewById(R.id.dock_track)
+        undoButton = root.findViewById(R.id.undo_button)
+        undoSatellite = root.findViewById(R.id.undo_satellite)
+        trackBg.cornerRadius = barHeight() / 2f
+        dockTrack.background = trackBg
+        undoButton.background = secondaryBg()
+        undoSatellite.background = secondaryBg()
+        pressFeedback(undoButton)
+        pressFeedback(undoSatellite)
+        undoButton.setOnClickListener { onUndo() }
+        undoSatellite.setOnClickListener { onUndo() }
         applyColor(State.LOADING.color)
         buildStrip()
 
@@ -216,6 +268,23 @@ class OverlayService : Service() {
         wm.addView(root, params)
         listenForIme()
         root.animate().alpha(1f).setDuration(220).start()
+    }
+
+    /** The quieter round background of the Undo buttons, so the mic stays the main target. */
+    private fun secondaryBg() = GradientDrawable().apply {
+        shape = GradientDrawable.OVAL
+        setColor(0xFF2E3552.toInt())
+        setStroke(dp(1), 0x33FFFFFF)
+    }
+
+    private fun pressFeedback(v: View) = v.setOnTouchListener { view, e ->
+        when (e.actionMasked) {
+            MotionEvent.ACTION_DOWN ->
+                view.animate().scaleX(0.9f).scaleY(0.9f).setStartDelay(0).setDuration(90).start()
+            MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL ->
+                view.animate().scaleX(1f).scaleY(1f).setStartDelay(0).setDuration(140).start()
+        }
+        false
     }
 
     private fun applyColor(c: Int) {
@@ -295,10 +364,14 @@ class OverlayService : Service() {
     private fun circleSize() = dp(68)
     private fun barHeight() = dp(56)
     private fun barMargin() = dp(8)
-    private fun barRadius() = dp(16).toFloat()
     private fun stripGap() = dp(8)
     private fun chipHeight() = dp(42)
     private fun imeThreshold() = dp(64)
+    private fun panelGap() = dp(6)
+    private fun edgeMargin() = dp(8)
+    /** Clear of the status bar and the navigation bar, as the snapped circle is. */
+    private fun safeTop() = dp(48)
+    private fun safeBottom() = dp(72)
 
     @Suppress("DEPRECATION")
     private fun realMetrics() = DisplayMetrics().also { wm.defaultDisplay.getRealMetrics(it) }
@@ -346,8 +419,13 @@ class OverlayService : Service() {
         if (kb >= imeThreshold()) {
             val wasDocked = docked
             if (!docked) {
-                bubbleX = params.x
-                bubbleY = params.y
+                // the bar has its own permanent Undo
+                hideSatellite(animate = false)
+                // a widened circle window is not where the circle rests
+                val rest = circleRest
+                bubbleX = rest?.get(0) ?: params.x
+                bubbleY = rest?.get(1) ?: params.y
+                circleRest = null
                 docked = true
                 // Setting the field's text restarts the keyboard, which can read as closed for
                 // a poll or two: only a choice hidden for longer than that is stale.
@@ -358,14 +436,16 @@ class OverlayService : Service() {
             }
             // also re-run while docked: the keyboard can change height (emoji panel, rotation)
             imeHeight = kb
-            shapeBar()
+            if (suggestions.isNotEmpty()) expandDocked() else shapeBar()
             if (!wasDocked) { morphIn(); updateOptions() }
         } else if (docked) {
             docked = false
             imeHeight = 0
+            panelExtra = 0
             hiddenSince = SystemClock.uptimeMillis()
             updateOptions()
             shapeCircle()
+            if (suggestions.isNotEmpty()) expandCircle()
             morphIn()
         }
     }
@@ -381,18 +461,25 @@ class OverlayService : Service() {
     private fun shapeBar() {
         val w = screenW() - 2 * barMargin()
         val h = barHeight()
-        val y = (screenH() - imeHeight - h).coerceAtLeast(0)
-        placeWindow(barMargin(), y, w, h)
+        // the suggestion panel adds height above the bar; the bar itself stays on the keyboard
+        val y = (screenH() - imeHeight - h - panelExtra).coerceAtLeast(0)
+        placeWindow(barMargin(), y, w, h + panelExtra)
 
-        // the mic slides to the right edge and rounds off into a circle as the strip opens
+        // two big targets in the far corners (Fitts), nothing tappable in between
+        shapeInner(h, h, h / 2f, Gravity.END or Gravity.BOTTOM)
+        dockTrack.visibility = View.VISIBLE
+        undoButton.visibility = View.VISIBLE
+        undoButton.alpha = if (TypingAccessibilityService.canUndo) 1f else 0.45f
+
+        // the word-choice strip opens in the empty middle, between the two buttons
         val p = optionsProgress
-        val cw = (w + (h - w) * p).toInt()
-        val radius = barRadius() + (h / 2f - barRadius()) * p
-        shapeInner(cw, h, radius, Gravity.END or Gravity.CENTER_VERTICAL)
-
-        val sw = (w - h - stripGap()).coerceAtLeast(0)
-        val lp = strip.layoutParams
-        if (lp.width != sw) { lp.width = sw; strip.layoutParams = lp }
+        val sw = (w - 2 * h - 2 * stripGap()).coerceAtLeast(0)
+        val lp = strip.layoutParams as FrameLayout.LayoutParams
+        if (lp.width != sw || lp.leftMargin != h + stripGap()) {
+            lp.width = sw
+            lp.leftMargin = h + stripGap()
+            strip.layoutParams = lp
+        }
         strip.alpha = p
         strip.translationX = (1f - p) * dp(32)
         strip.visibility = if (p > 0f) View.VISIBLE else View.GONE
@@ -406,6 +493,27 @@ class OverlayService : Service() {
         placeWindow(x, y, s, s)
         shapeInner(circleSize(), circleSize(), circleSize() / 2f, Gravity.CENTER)
         strip.visibility = View.GONE
+        dockTrack.visibility = View.GONE
+        undoButton.visibility = View.GONE
+    }
+
+    /** Moves and resizes the circle window, keeping the mic at its resting spot on screen. */
+    private fun widenCircle(x: Int, y: Int, w: Int, h: Int) {
+        val (rx, ry, rw, rh) = restingCircle().also { circleRest = it }
+        placeWindow(x, y, w, h)
+        val cs = circleSize()
+        shapeInner(cs, cs, cs / 2f, Gravity.TOP or Gravity.START, rx - x + (rw - cs) / 2, ry - y + (rh - cs) / 2)
+    }
+
+    /** The circle window as it is when nothing has widened it. */
+    private fun restingCircle() = circleRest ?: intArrayOf(params.x, params.y, params.width, params.height)
+
+    /** Puts the circle window back exactly as it was before it was widened. */
+    private fun unwidenCircle() {
+        val rest = circleRest ?: return
+        circleRest = null
+        placeWindow(rest[0], rest[1], rest[2], rest[3])
+        shapeInner(circleSize(), circleSize(), circleSize() / 2f, Gravity.CENTER)
     }
 
     private fun placeWindow(x: Int, y: Int, w: Int, h: Int) {
@@ -417,15 +525,26 @@ class OverlayService : Service() {
         if (root.isAttachedToWindow) runCatching { wm.updateViewLayout(root, params) }
     }
 
-    private fun shapeInner(w: Int, h: Int, radius: Float, gravity: Int) {
+    /** [left], [top]: offsets for a pinned (TOP|START) mic in a window widened around it. */
+    private fun shapeInner(w: Int, h: Int, radius: Float, gravity: Int, left: Int = 0, top: Int = 0) {
         val lp = circle.layoutParams as FrameLayout.LayoutParams
-        if (lp.width != w || lp.height != h || lp.gravity != gravity) {
+        if (lp.width != w || lp.height != h || lp.gravity != gravity || lp.leftMargin != left || lp.topMargin != top) {
             lp.width = w
             lp.height = h
             lp.gravity = gravity
+            lp.leftMargin = left
+            lp.topMargin = top
             circle.layoutParams = lp
         }
         bg.cornerRadius = radius
+        // the ring pulses around the mic wherever it is pinned
+        val plp = pulse.layoutParams as FrameLayout.LayoutParams
+        if (plp.gravity != gravity || plp.leftMargin != left || plp.topMargin != top) {
+            plp.gravity = gravity
+            plp.leftMargin = left
+            plp.topMargin = top
+            pulse.layoutParams = plp
+        }
     }
 
     // ------------------------------------------------------------------ word choices
@@ -465,13 +584,13 @@ class OverlayService : Service() {
         }
         root.addView(
             strip,
-            FrameLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, Gravity.START or Gravity.CENTER_VERTICAL),
+            FrameLayout.LayoutParams(0, barHeight(), Gravity.START or Gravity.BOTTOM),
         )
     }
 
     /** [current]: what the field holds now, drawn in the bubble's colour with a tick. */
-    private fun makeChip(label: String, current: Boolean, onClick: () -> Unit) = TextView(this).apply {
-        text = if (current) "✓ $label" else label
+    private fun makeChip(label: String, current: Boolean, tick: Boolean = current, onClick: () -> Unit) = TextView(this).apply {
+        text = if (tick) "✓ $label" else label
         setTextColor(Color.WHITE)
         textSize = 16f
         typeface = Typeface.DEFAULT_BOLD
@@ -617,7 +736,255 @@ class OverlayService : Service() {
         }
     }
 
+    // ------------------------------------------------------------------ sentence suggestions
+
+    /** True when the best sentence is too doubtful to type without asking. */
+    private fun isUnsure(res: Recognizer.Result): Boolean {
+        val top = res.candidates.firstOrNull() ?: return false
+        return top.probability < CONFIDENCE_THRESHOLD && res.candidates.size >= 2
+    }
+
+    private fun makeSuggestion(c: Candidate, best: Boolean, onClick: () -> Unit) =
+        makeChip(c.text, current = best, tick = false, onClick = onClick).apply {
+            maxLines = 2
+            ellipsize = TextUtils.TruncateAt.END
+            gravity = Gravity.START or Gravity.CENTER_VERTICAL
+            minHeight = chipHeight()
+            setPadding(dp(18), dp(8), dp(18), dp(8))
+            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+                topMargin = dp(3); bottomMargin = dp(3)
+            }
+        }
+
+    /** Instead of typing: fill the panel with the best sentences and grow the window to fit it. */
+    private fun showSuggestions(res: Recognizer.Result, n: Int) {
+        dismissChoice()
+        hideSatellite(animate = false)
+        closeSuggestions()
+        suggestions = res.candidates.take(MAX_SUGGESTIONS)
+        suggestionRes = res
+        suggestionFor = n
+        suggestions.forEachIndexed { i, c ->
+            suggestionBox.addView(makeSuggestion(c, best = i == 0) { onSuggestion(c, n) })
+        }
+        suggestionBox.visibility = View.VISIBLE
+        if (docked) expandDocked() else expandCircle()
+
+        suggestionBox.animate().cancel()
+        suggestionBox.alpha = 0f
+        suggestionBox.translationY = if (docked) dp(12).toFloat() else 0f
+        suggestionBox.animate().alpha(1f).translationY(0f)
+            .setStartDelay(0).setDuration(240).setInterpolator(ease).start()
+    }
+
+    /** The panel's size for at most [maxW] x [maxH]; [fill] makes it exactly [maxW] wide. */
+    private fun measurePanel(maxW: Int, maxH: Int, fill: Boolean): Pair<Int, Int> {
+        suggestionBox.measure(
+            View.MeasureSpec.makeMeasureSpec(maxW, if (fill) View.MeasureSpec.EXACTLY else View.MeasureSpec.AT_MOST),
+            View.MeasureSpec.makeMeasureSpec(maxH, View.MeasureSpec.AT_MOST),
+        )
+        return suggestionBox.measuredWidth to suggestionBox.measuredHeight.coerceAtMost(maxH)
+    }
+
+    private fun placePanel(w: Int, h: Int, left: Int, top: Int) {
+        val lp = suggestionBox.layoutParams as FrameLayout.LayoutParams
+        if (lp.width != w || lp.height != h || lp.leftMargin != left || lp.topMargin != top ||
+            lp.gravity != (Gravity.TOP or Gravity.START)
+        ) {
+            lp.width = w
+            lp.height = h
+            lp.leftMargin = left
+            lp.topMargin = top
+            lp.gravity = Gravity.TOP or Gravity.START
+            suggestionBox.layoutParams = lp
+        }
+    }
+
+    /**
+     * Docked: the panel sits above the bar at full bar width and the window grows upward only,
+     * so the bar stays on the keyboard; the panel's height is capped below the status bar.
+     */
+    private fun expandDocked() {
+        val w = screenW() - 2 * barMargin()
+        val room = (screenH() - imeHeight - barHeight() - panelGap() - safeTop()).coerceAtLeast(0)
+        val (_, ph) = measurePanel(w, room, fill = true)
+        placePanel(w, ph, 0, 0)
+        panelExtra = if (ph > 0) ph + panelGap() else 0
+        shapeBar()
+    }
+
+    /**
+     * Floating: the panel opens on the side of the circle with more room, centred on it. The
+     * window widens and moves, but the mic is pinned inside it at its old screen position, so
+     * the circle itself neither drifts nor jumps; the window never leaves the screen.
+     */
+    private fun expandCircle() {
+        val (rx, ry, rw, rh) = restingCircle()
+        val sw = screenW()
+        val sh = screenH()
+        val gap = panelGap()
+
+        val roomRight = (sw - edgeMargin() - (rx + rw) - gap).coerceAtLeast(0)
+        val roomLeft = (rx - edgeMargin() - gap).coerceAtLeast(0)
+        val onRight = roomRight >= roomLeft
+        val maxW = minOf(if (onRight) roomRight else roomLeft, dp(300))
+        val maxH = (sh - safeTop() - safeBottom()).coerceAtLeast(rh)
+        val (pw, ph) = measurePanel(maxW, maxH, fill = false)
+
+        val w = rw + gap + pw
+        val h = maxOf(rh, ph)
+        // the room above already keeps the window between the side margins
+        val x = if (onRight) rx else rx - gap - pw
+        // centred on the circle, kept inside the safe band, and always containing the circle
+        val lo = minOf(safeTop(), ry).coerceAtLeast(0)
+        val hi = (maxOf(sh - safeBottom(), ry + rh).coerceAtMost(sh) - h).coerceAtLeast(lo)
+        val y = (ry + rh / 2 - h / 2).coerceIn(lo, hi)
+        widenCircle(x, y, w, h)
+
+        // where the old circle window now lies inside the widened one
+        val cx = rx - x
+        val cy = ry - y
+        val px = if (onRight) cx + rw + gap else cx - gap - pw
+        val py = (cy + rh / 2 - ph / 2).coerceIn(0, (h - ph).coerceAtLeast(0))
+        placePanel(pw, ph, px, py)
+    }
+
+    /** A sentence was tapped: type it, empty the panel and shrink the window back. */
+    private fun onSuggestion(c: Candidate, n: Int) {
+        if (suggestions.isEmpty() || n != suggestionFor || n != dictation) return
+        val res = suggestionRes
+        val text = c.text
+        val where = TypingAccessibilityService.deliver(this, text)
+        closeSuggestions()
+        if (where == "clipboard") toast("Αντιγράφηκε: $text")
+        Log.i(TAG, "[suggestion] $where: $text (${(c.probability * 100).toInt()}%)")
+        if (where != "typed") return
+        // the person chose: a late LLM answer for this dictation must not overwrite it
+        if (res != null) lastTyped = Typed(n, res, c.words).apply { decided = true }
+        showSatellite()
+    }
+
+    /** Empties the panel and puts the window back exactly as it was before it grew. */
+    private fun closeSuggestions() {
+        if (suggestions.isEmpty()) return
+        suggestions = emptyList()
+        suggestionRes = null
+        suggestionBox.animate().cancel()
+        suggestionBox.alpha = 1f
+        suggestionBox.translationY = 0f
+        suggestionBox.removeAllViews()
+        suggestionBox.visibility = View.GONE
+        if (docked) {
+            panelExtra = 0
+            shapeBar()
+        } else {
+            unwidenCircle()
+        }
+    }
+
+    // ------------------------------------------------------------------ undo
+
+    private fun satelliteSize() = dp(48)
+
+    /**
+     * After text was typed, floating: the Undo bubble slides out from behind the circle toward
+     * the middle of the screen and rests just clear of it, then retracts on its own.
+     */
+    private fun showSatellite() {
+        if (docked || suggestions.isNotEmpty()) return
+        main.removeCallbacks(retractSatellite)
+        undoSatellite.animate().cancel()
+
+        val (rx, ry, rw, rh) = restingCircle()
+        val sw = screenW()
+        val sh = screenH()
+        val ccx = rx + rw / 2
+        val ccy = ry + rh / 2
+        val half = satelliteSize() / 2
+        val dist = circleSize() / 2 + half + dp(6)
+        // toward the screen's middle, and upward unless that would reach under the status bar
+        val sx = if (ccx < sw / 2) 1 else -1
+        val sy = if (ccy - dist - half < safeTop()) 1 else -1
+        satDx = (dist * 0.8f).toInt() * sx
+        satDy = (dist * 0.6f).toInt() * sy
+        val scx = ccx + satDx
+        val scy = ccy + satDy
+
+        // the smallest window holding both the resting circle and the satellite, kept on screen
+        val left = minOf(rx, scx - half)
+        val top = minOf(ry, scy - half)
+        val w = maxOf(rx + rw, scx + half) - left
+        val h = maxOf(ry + rh, scy + half) - top
+        val x = left.coerceIn(0, (sw - w).coerceAtLeast(0))
+        val y = top.coerceIn(0, (sh - h).coerceAtLeast(0))
+        widenCircle(x, y, w, h)
+
+        val lp = undoSatellite.layoutParams as FrameLayout.LayoutParams
+        lp.gravity = Gravity.TOP or Gravity.START
+        lp.leftMargin = scx - half - x
+        lp.topMargin = scy - half - y
+        undoSatellite.layoutParams = lp
+
+        // start tucked under the circle's centre, then slide out to rest
+        if (!satelliteShown) {
+            undoSatellite.translationX = -satDx.toFloat()
+            undoSatellite.translationY = -satDy.toFloat()
+            undoSatellite.scaleX = 0.5f; undoSatellite.scaleY = 0.5f
+            undoSatellite.alpha = 0f
+        }
+        satelliteShown = true
+        undoSatellite.isEnabled = true
+        undoSatellite.visibility = View.VISIBLE
+        undoSatellite.animate().translationX(0f).translationY(0f).scaleX(1f).scaleY(1f).alpha(1f)
+            .setStartDelay(60).setDuration(320).setInterpolator(ease).start()
+        main.postDelayed(retractSatellite, SATELLITE_MS)
+    }
+
+    /** Tucks the satellite back behind the circle; [animate] off hides it at once. */
+    private fun hideSatellite(animate: Boolean) {
+        main.removeCallbacks(retractSatellite)
+        if (!satelliteShown && undoSatellite.visibility != View.VISIBLE) return
+        satelliteShown = false
+        // a second tap while it slides back must not undo twice
+        undoSatellite.isEnabled = false
+        undoSatellite.animate().cancel()
+        if (!animate) { stowSatellite(); return }
+        undoSatellite.animate()
+            .translationX(-satDx.toFloat()).translationY(-satDy.toFloat())
+            .scaleX(0.5f).scaleY(0.5f).alpha(0f)
+            .setStartDelay(0).setDuration(200).setInterpolator(ease)
+            .withEndAction { stowSatellite() }
+            .start()
+    }
+
+    private fun stowSatellite() {
+        undoSatellite.visibility = View.GONE
+        undoSatellite.translationX = 0f; undoSatellite.translationY = 0f
+        undoSatellite.scaleX = 1f; undoSatellite.scaleY = 1f
+        undoSatellite.alpha = 1f
+        if (!docked && suggestions.isEmpty()) unwidenCircle()
+    }
+
+    /** Either Undo button: takes the last typed phrase back out of the field. */
+    private fun onUndo() {
+        hideSatellite(animate = false)
+        when (TypingAccessibilityService.undoLastInjection()) {
+            "undone" -> {
+                // the open word choice and any late LLM answer were about the removed sentence
+                dismissChoice()
+                lastTyped = null
+                setLlmPending(false)
+            }
+            "missing" -> toast("Το κείμενο δεν βρέθηκε πια στο πεδίο")
+            else -> toast("Τίποτα για αναίρεση")
+        }
+        if (docked) shapeBar()
+    }
+
     // ------------------------------------------------------------------ touch
+
+    private fun onMic(e: MotionEvent) =
+        e.x >= circle.left && e.x < circle.right && e.y >= circle.top && e.y < circle.bottom
 
     private var downX = 0f
     private var downY = 0f
@@ -628,6 +995,8 @@ class OverlayService : Service() {
 
     private fun onTouch(v: View, e: MotionEvent): Boolean {
         val slop = ViewConfiguration.get(this).scaledTouchSlop
+        // the bar's middle and a widened window's spare room are dead space: only the mic answers
+        if (e.actionMasked == MotionEvent.ACTION_DOWN && (docked || circleRest != null) && !onMic(e)) return false
         when (e.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
                 downX = e.rawX; downY = e.rawY; startX = params.x; startY = params.y
@@ -638,14 +1007,20 @@ class OverlayService : Service() {
             MotionEvent.ACTION_MOVE -> {
                 val dx = e.rawX - downX
                 val dy = e.rawY - downY
-                if (docked) {
-                    // the bar stays pinned to the keyboard
+                if (docked || suggestions.isNotEmpty()) {
+                    // the bar stays pinned to the keyboard, and an open panel pins the circle
                     if (abs(dx) > slop || abs(dy) > slop) main.removeCallbacks(longPress)
                 } else if (moved || abs(dx) > slop || abs(dy) > slop) {
+                    if (!moved && circleRest != null) {
+                        // the satellite widened the window: tuck it away and drag the bare circle
+                        hideSatellite(animate = false)
+                        startX = params.x; startY = params.y
+                        downX = e.rawX; downY = e.rawY
+                    }
                     moved = true
                     main.removeCallbacks(longPress)
-                    params.x = startX + dx.toInt()
-                    params.y = startY + dy.toInt()
+                    params.x = startX + (e.rawX - downX).toInt()
+                    params.y = startY + (e.rawY - downY).toInt()
                     runCatching { wm.updateViewLayout(root, params) }
                 }
             }
@@ -673,12 +1048,14 @@ class OverlayService : Service() {
     // ------------------------------------------------------------------ actions
 
     private fun onTap() {
+        hideSatellite(animate = false)
         when (state) {
             State.LOADING -> toast("Φορτώνει το μοντέλο...")
             State.ERROR -> toast(Recognizer.lastError ?: "Το μοντέλο δεν φορτώθηκε")
             // speaking again keeps what was typed and closes any open choice (and a late answer)
             State.IDLE -> runCatching {
                 choice = null
+                closeSuggestions()
                 dictation++
                 setLlmPending(false)
                 recorder.start()
@@ -699,6 +1076,8 @@ class OverlayService : Service() {
 
     private fun transcribe(wav: FloatArray, id: String) {
         choice = null
+        hideSatellite(animate = false)
+        closeSuggestions()
         val n = ++dictation
         setLlmPending(false)
         if (wav.size < AudioRecorder.SAMPLE_RATE / 5) { setState(State.IDLE); toast("Πολύ σύντομο"); return }
@@ -726,6 +1105,14 @@ class OverlayService : Service() {
     private fun typeResult(r: Result<Recognizer.Result>, llm: LlmCorrector.Outcome?, id: String, n: Int, waiting: Boolean) {
         setState(State.IDLE)
         r.onSuccess { res ->
+            // a usable LLM answer is trusted as is; otherwise a doubtful sentence is asked, not typed
+            if (llm?.words.isNullOrEmpty() && isUnsure(res)) {
+                Log.i(TAG, "[$id] unsure (${(res.candidates.first().probability * 100).toInt()}%), asking: " +
+                    res.candidates.take(MAX_SUGGESTIONS).joinToString(" | ") { it.text } +
+                    (if (waiting) ", late LLM answer will be ignored" else ""))
+                showSuggestions(res, n)
+                return@onSuccess
+            }
             val local = res.candidates.firstOrNull()?.words
                 ?: res.text.split(' ').filter { it.isNotBlank() }
             val words = llm?.words?.takeIf { it.isNotEmpty() } ?: local
@@ -745,6 +1132,7 @@ class OverlayService : Service() {
             Log.i(TAG, "[$id] $where: $text (${res.inferenceMs} ms$via)")
             if (where != "typed") return@onSuccess
             lastTyped = Typed(n, res, words)
+            showSatellite()
             setLlmPending(waiting)
             offerChoices(words, text, res.candidates, forced = local.takeIf { it != words })
         }.onFailure { toast("Σφάλμα: $it") }
@@ -809,6 +1197,11 @@ class OverlayService : Service() {
         private const val LLM_WAIT_MS = 2_500L
         /** A keyboard gone for less than this (restarting after the text changed) keeps the choice. */
         private const val CHOICE_GRACE_MS = 1_500L
+        /** Below this the best sentence is not typed; the best [MAX_SUGGESTIONS] are offered. */
+        private const val CONFIDENCE_THRESHOLD = 0.85f
+        private const val MAX_SUGGESTIONS = 3
+        /** How long the floating Undo bubble stays out if it is not touched. */
+        private const val SATELLITE_MS = 5_000L
         @Volatile var running = false
     }
 }
