@@ -39,24 +39,30 @@ object ModelDownloader {
     const val BASE_URL =
         "https://github.com/milkcodelabs/open-hackathon-2026-Archytas/releases/download/$RELEASE_TAG/"
 
-    class ModelFile(val name: String, val bytes: Long, val sha256: String, val what: String)
+    /**
+     * [group]: files that only work together (a model and its labels). If any file of a group
+     * is wrong, the whole group is fetched again, so a model is never paired with the labels of
+     * another one. Files not listed here, such as the personal model (omni.personal.*), are
+     * never touched.
+     */
+    class ModelFile(val name: String, val bytes: Long, val sha256: String, val what: String, val group: String = name)
 
     /** What the default engine (Omnilingual + layer 2) needs. wav2vec2 stays optional (import). */
     val FILES = listOf(
         ModelFile("omni.onnx", 365_353_615L,
-            "6ae7949b48ecc0658970a473e4c1526544b206464aa8682e8a5e24f04ac66798", "ακουστικό μοντέλο"),
+            "6ae7949b48ecc0658970a473e4c1526544b206464aa8682e8a5e24f04ac66798", "ακουστικό μοντέλο", "omni"),
         ModelFile("omni.labels.json", 235L,
-            "97cc3eb93df00bc5c144c09d29432d441b6b575e6cf865e5625cefbccdb823e3", "ετικέτες"),
+            "97cc3eb93df00bc5c144c09d29432d441b6b575e6cf865e5625cefbccdb823e3", "ετικέτες", "omni"),
         ModelFile("el_3gram.gvtlm", 94_892_390L,
             "b9c45410d1a2215d0997862fab7a2c1aef5dd01e6dc1f1bb66a14e6c719c1426", "γλωσσικό μοντέλο"),
         ModelFile("el_homophones.bin", 10_498_299L,
             "9d6b6da6c8b86c671853a96f97b68e7c8795e1bec6e976825ce08c27404c2159", "ορθογραφία"),
         ModelFile("el_gpt2.int8.onnx", 163_794_538L,
-            "02d09b774689a94792e6e8771fd013ce47cf8cf19b45873541686f10f6f47019", "νευρωνικό γλωσσικό μοντέλο"),
+            "02d09b774689a94792e6e8771fd013ce47cf8cf19b45873541686f10f6f47019", "νευρωνικό γλωσσικό μοντέλο", "gpt2"),
         ModelFile("el_gpt2.vocab.json", 1_719_026L,
-            "6aac9ba2ea2bec874ed39cbf1c511466cb3e8b1ed2e1105ed100c99bf5242a2b", "λεξιλόγιο νευρωνικού"),
+            "6aac9ba2ea2bec874ed39cbf1c511466cb3e8b1ed2e1105ed100c99bf5242a2b", "λεξιλόγιο νευρωνικού", "gpt2"),
         ModelFile("el_gpt2.merges.txt", 1_377_379L,
-            "79b67fa9426a6d70838a23304cea1b5acb0d700e4acf4af9190015a1ca9b2568", "λεξιλόγιο νευρωνικού"),
+            "79b67fa9426a6d70838a23304cea1b5acb0d700e4acf4af9190015a1ca9b2568", "λεξιλόγιο νευρωνικού", "gpt2"),
         ModelFile("test.wav", 311_098L,
             "f8c48eadf3625ddf46fedc0521ce688902dcc0f3bd3b821c8581070cc0688afc", "δοκιμαστικός ήχος"),
     )
@@ -89,8 +95,14 @@ object ModelDownloader {
     private fun target(ctx: Context, f: ModelFile) = File(Recognizer.filesRoot(ctx), f.name)
     private fun partial(ctx: Context, f: ModelFile) = File(Recognizer.filesRoot(ctx), f.name + ".part")
 
-    /** A file counts as present when its size matches; the hash was checked when it arrived. */
-    fun missing(ctx: Context): List<ModelFile> = FILES.filter { target(ctx, it).length() != it.bytes }
+    /**
+     * A file counts as present when its size matches (the hash was checked when it arrived).
+     * A wrong file makes its whole group missing, so a model and its labels are replaced together.
+     */
+    fun missing(ctx: Context): List<ModelFile> {
+        val bad = FILES.filter { target(ctx, it).length() != it.bytes }.map { it.group }.toSet()
+        return FILES.filter { it.group in bad }
+    }
 
     fun complete(ctx: Context): Boolean = missing(ctx).isEmpty()
 

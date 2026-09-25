@@ -99,6 +99,10 @@ data class ScreenState(
     val neuralPresent: Boolean,
     val neuralOn: Boolean,
     val neuralMb: Long,
+    val personalPresent: Boolean,
+    val personalOn: Boolean,
+    val personalMb: Long,
+    val personalInfo: String,
     val llmOn: Boolean,
     val llmProvider: LlmCorrector.Provider,
     /** Providers whose API key was built into the app. */
@@ -128,6 +132,7 @@ interface MainActions {
     fun selectEngine(e: Recognizer.Engine)
     fun setLanguageModel(on: Boolean)
     fun setNeuralLm(on: Boolean)
+    fun setPersonal(on: Boolean)
     fun setLlm(on: Boolean)
     fun selectLlmProvider(p: LlmCorrector.Provider)
     fun runCheck()
@@ -440,6 +445,21 @@ private fun EngineCard(state: ScreenState, actions: MainActions) {
             },
             fontSize = 14.sp, color = OnMuted, modifier = Modifier.padding(top = 8.dp),
         )
+        if (state.engine == Recognizer.Engine.OMNI && state.personalPresent) {
+            Spacer(Modifier.height(12.dp))
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text("Προσωπικό μοντέλο", fontSize = 16.sp, color = OnBg)
+                    Text(
+                        (if (state.personalOn) "Ενεργό, ${state.personalMb} MB: εκπαιδευμένο στη φωνή του ομιλητή."
+                        else "Ανενεργό: χρησιμοποιείται το γενικό Omnilingual.") +
+                            (if (state.personalInfo.isNotBlank()) "\n" + state.personalInfo else ""),
+                        fontSize = 14.sp, color = OnMuted,
+                    )
+                }
+                Switch(checked = state.personalOn, onCheckedChange = { actions.setPersonal(it) })
+            }
+        }
         run {
             Spacer(Modifier.height(12.dp))
             Row(verticalAlignment = Alignment.CenterVertically) {

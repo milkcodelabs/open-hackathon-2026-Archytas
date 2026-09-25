@@ -34,6 +34,7 @@ object Recognizer {
     private const val KEY_ENGINE = "engine"
     private const val KEY_LM = "use_lm"
     private const val KEY_NEURAL = "use_neural_lm"
+    private const val KEY_PERSONAL = "use_personal_model"
 
     enum class Engine { OMNI, CTC }
 
@@ -42,6 +43,8 @@ object Recognizer {
     @Volatile private var ctc: CtcModel? = null
     /** Which CTC engine [ctc] holds: both CTC engines share the slot, never both loaded. */
     @Volatile private var ctcEngine: Engine? = null
+    /** Whether [ctc] is the speaker's own fine-tuned model rather than the downloaded one. */
+    @Volatile private var ctcPersonal: Boolean = false
     @Volatile private var lm: NgramLm? = null
     @Volatile private var beam: BeamSearch? = null
     /** Layer 2b; null when el_homophones.bin is missing (then 2a alone runs). */
@@ -69,6 +72,9 @@ object Recognizer {
     /** Layer 2c, the neural LM that re-ranks the best sentences with context. */
     @Volatile var useNeuralLm: Boolean = true
         private set
+    /** Use the speaker's own acoustic model (omni.personal.*) when it is on the phone. */
+    @Volatile var usePersonal: Boolean = true
+        private set
     @Volatile var speakerId: String = "default"   // TODO(M5): set by enrollment
     @Volatile var lastError: String? = null
 
@@ -90,6 +96,45 @@ object Recognizer {
         }
         useLanguageModel = p.getBoolean(KEY_LM, true)
         useNeuralLm = p.getBoolean(KEY_NEURAL, true)
+        usePersonal = p.getBoolean(KEY_PERSONAL, true)
+    }
+
+    // ------------------------------------------------------------------ personal model
+    //
+    // A speaker's fine-tuned Omnilingual (e.g. the M7 run) lives next to the downloaded one
+    // under its own names. ModelDownloader never touches these files, so the two cannot be
+    // mixed: the personal model is used only when BOTH its graph and its labels are present
+    // (its labels may list the letters in a different order than the base model's).
+
+    fun personalFile(ctx: Context): File = File(filesRoot(ctx), "omni.personal.onnx")
+    fun personalLabelsFile(ctx: Context): File = File(filesRoot(ctx), "omni.personal.labels.json")
+    /** Optional: {"speaker": ..., "base": ..., "trained": ..., "note": ...} for the screen. */
+    fun personalMetaFile(ctx: Context): File = File(filesRoot(ctx), "omni.personal.json")
+
+    fun personalPresent(ctx: Context): Boolean = personalFile(ctx).exists() && personalLabelsFile(ctx).exists()
+    fun personalSizeMb(ctx: Context): Long = personalFile(ctx).length() / 1_000_000
+
+    /** The personal model applies to the Omnilingual engine only (it was trained from it). */
+    private fun wantPersonal(ctx: Context): Boolean = engine == Engine.OMNI && usePersonal && personalPresent(ctx)
+
+    /** One line about the personal model for the screen, from omni.personal.json if present. */
+    fun personalInfo(ctx: Context): String = runCatching {
+        val j = org.json.JSONObject(personalMetaFile(ctx).readText())
+        listOf("speaker", "base", "trained", "note").mapNotNull { k -> j.optString(k).takeIf { it.isNotBlank() } }
+            .joinToString("  ·  ")
+    }.getOrDefault("")
+
+    fun setUsePersonal(ctx: Context, on: Boolean) {
+        usePersonal = on
+        prefs(ctx).edit().putBoolean(KEY_PERSONAL, on).apply()
+        dropAcoustic()
+        Log.i(TAG, "personal model = $on")
+    }
+
+    /** Forget the loaded acoustic model; the next recognition loads the right one. */
+    @Synchronized
+    fun dropAcoustic() {
+        ctc?.close(); ctc = null; ctcEngine = null; ctcPersonal = false; beam = null; speller = null
     }
 
     fun neuralPresent(ctx: Context): Boolean = NeuralRescorer.present(filesRoot(ctx))
@@ -151,12 +196,12 @@ object Recognizer {
 
     /** Whether the engine the user picked can actually run. */
     fun filesPresent(ctx: Context): Boolean = when (engine) {
-        Engine.OMNI -> omniPresent(ctx)
+        Engine.OMNI -> omniPresent(ctx) || wantPersonal(ctx)
         Engine.CTC -> ctcPresent(ctx)
     }
 
     fun sizeMb(ctx: Context): Long = when (engine) {
-        Engine.OMNI -> omniFile(ctx).length() / 1_000_000
+        Engine.OMNI -> (if (wantPersonal(ctx)) personalFile(ctx) else omniFile(ctx)).length() / 1_000_000
         Engine.CTC -> modelFile(ctx).length() / 1_000_000
     }
 
@@ -220,7 +265,8 @@ object Recognizer {
 
     @Synchronized
     fun load(ctx: Context): Boolean {
-        if (ready) return true
+        val personal = wantPersonal(ctx)
+        if (ready && ctcPersonal == personal) return true
         if (!filesPresent(ctx)) {
             lastError = when (engine) {
                 Engine.OMNI -> "Λείπει το omni.onnx στο ${filesRoot(ctx).absolutePath}"
@@ -231,10 +277,14 @@ object Recognizer {
         val t0 = System.currentTimeMillis()
         return try {
             ctc?.close(); ctc = null; beam = null; speller = null
-            val m = if (engine == Engine.OMNI) CtcModel(omniFile(ctx), omniLabelsFile(ctx))
-                    else CtcModel(modelFile(ctx), labelsFile(ctx))
+            val m = when {
+                personal -> CtcModel(personalFile(ctx), personalLabelsFile(ctx))
+                engine == Engine.OMNI -> CtcModel(omniFile(ctx), omniLabelsFile(ctx))
+                else -> CtcModel(modelFile(ctx), labelsFile(ctx))
+            }
             ctc = m
             ctcEngine = engine
+            ctcPersonal = personal
             if (useLanguageModel && lmPresent(ctx)) {
                 val n = lm ?: NgramLm.load(lmFile(ctx)).also { lm = it }
                 buildLayer2(ctx, engine, m.labels, n)
@@ -253,7 +303,7 @@ object Recognizer {
     /** Frees the engine that is no longer selected, so both never sit in memory at once. */
     @Synchronized
     fun releaseUnused() {
-        if (ctcEngine != engine) { ctc?.close(); ctc = null; ctcEngine = null; beam = null; speller = null }
+        if (ctcEngine != engine) { ctc?.close(); ctc = null; ctcEngine = null; ctcPersonal = false; beam = null; speller = null }
     }
 
     // ------------------------------------------------------------------ recognition
@@ -334,10 +384,9 @@ object Recognizer {
         return result
     }
 
-    /** The engine's name for the screen. */
-    @Suppress("UNUSED_PARAMETER")
+    /** The engine's name for the screen; with no context, it describes the loaded model. */
     fun label(ctx: Context?): String = when (engine) {
-        Engine.OMNI -> "Omnilingual"
+        Engine.OMNI -> if (if (ctx != null) wantPersonal(ctx) else ctcPersonal) "Omnilingual (προσωπικό)" else "Omnilingual"
         Engine.CTC -> "wav2vec2"
     }
 }
