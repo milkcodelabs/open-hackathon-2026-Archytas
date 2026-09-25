@@ -306,6 +306,7 @@ def lm_build(
     opensubtitles: Optional[Path] = typer.Option(None, "--opensubtitles", help="OPUS OpenSubtitles mono el (.txt or .txt.gz)."),
     wikipedia: Optional[Path] = typer.Option(None, "--wikipedia", help="wikimedia/wikipedia parquet shard (el)."),
     wiki_max_articles: Optional[int] = typer.Option(None, "--wiki-max-articles"),
+    text: Optional[list[Path]] = typer.Option(None, "--text", help="Everyday text (web/forum/messages): .txt[.gz], .jsonl[.gz] with 'text', or .parquet. Repeatable."),
     name: str = typer.Option("general_el", "--name"),
     dev_manifest: Optional[Path] = typer.Option(None, "--dev-manifest", help="Report perplexity/OOV on these references."),
     config: Optional[Path] = ConfigOpt,
@@ -323,6 +324,8 @@ def lm_build(
         sources["opensubtitles"] = opensubtitles
     if wikipedia:
         sources["wikipedia"] = wikipedia
+    for i, t in enumerate(text or []):
+        sources[f"text{i}:{t.stem}"] = t
     if not sources:
         raise typer.BadParameter("give at least one corpus")
     norm = Pipeline(cfg).normalizer
