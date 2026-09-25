@@ -134,6 +134,9 @@ class MainActivity : ComponentActivity() {
             lmPresent = Recognizer.lmPresent(this),
             lmOn = Recognizer.useLanguageModel,
             lmMb = Recognizer.lmSizeMb(this),
+            neuralPresent = Recognizer.neuralPresent(this),
+            neuralOn = Recognizer.useNeuralLm,
+            neuralMb = Recognizer.neuralSizeMb(this),
             bubbleOn = OverlayService.running,
             recording = recording,
             busy = busy,
@@ -189,6 +192,14 @@ class MainActivity : ComponentActivity() {
             Recognizer.releaseUnused()
             reloadBubble()
             tick++
+        }
+
+        override fun setNeuralLm(on: Boolean) {
+            if (on == Recognizer.useNeuralLm) return
+            lifecycleScope.launch {
+                withContext(Dispatchers.Default) { Recognizer.setUseNeuralLm(this@MainActivity, on) }
+                tick++
+            }
         }
 
         override fun runCheck() = this@MainActivity.runCheck()
@@ -271,6 +282,7 @@ class MainActivity : ComponentActivity() {
             appendLine(String.format(Locale.US, "χρόνος     %d ms   RTF %.2f", res.inferenceMs, res.rtf))
             if (res.usedLanguageModel) {
                 appendLine(String.format(Locale.US, "  εκ των οποίων beam+LM  %d ms", res.beamMs))
+                if (res.neuralMs > 0) appendLine(String.format(Locale.US, "  εκ των οποίων νευρωνικό %d ms", res.neuralMs))
             }
             val em = res.emissions
             appendLine(String.format(Locale.US, "εκπομπές   %d x %d", em.numFrames, em.vocabSize))

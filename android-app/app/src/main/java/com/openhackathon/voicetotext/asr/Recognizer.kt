@@ -5,6 +5,7 @@ import com.openhackathon.voicetotext.decoding.BeamSearch
 import com.openhackathon.voicetotext.decoding.Candidate
 import com.openhackathon.voicetotext.decoding.Candidates
 import com.openhackathon.voicetotext.decoding.HomophoneIndex
+import com.openhackathon.voicetotext.decoding.NeuralRescorer
 import com.openhackathon.voicetotext.decoding.NgramLm
 import com.openhackathon.voicetotext.decoding.SpellingRescorer
 import android.content.Context
@@ -32,6 +33,7 @@ object Recognizer {
     private const val PREFS = "gvt"
     private const val KEY_ENGINE = "engine"
     private const val KEY_LM = "use_lm"
+    private const val KEY_NEURAL = "use_neural_lm"
 
     enum class Engine { OMNI, CTC }
 
@@ -45,6 +47,8 @@ object Recognizer {
     /** Layer 2b; null when el_homophones.bin is missing (then 2a alone runs). */
     @Volatile private var homophones: HomophoneIndex? = null
     @Volatile private var speller: SpellingRescorer? = null
+    /** Layer 2c; null when switched off or its files are missing. */
+    @Volatile private var neural: NeuralRescorer? = null
     /** The speaker's own words (my_words.txt), normalized like the model's labels. */
     @Volatile private var personalWords: List<String> = emptyList()
 
@@ -61,6 +65,9 @@ object Recognizer {
 
     /** Layer 2. Off means the phone runs bare greedy decoding, which is what it did before. */
     @Volatile var useLanguageModel: Boolean = true
+        private set
+    /** Layer 2c, the neural LM that re-ranks the best sentences with context. */
+    @Volatile var useNeuralLm: Boolean = true
         private set
     @Volatile var speakerId: String = "default"   // TODO(M5): set by enrollment
     @Volatile var lastError: String? = null
@@ -82,6 +89,26 @@ object Recognizer {
             p.edit().putString(KEY_ENGINE, engine.name).putBoolean(KEY_OMNI_DEFAULT, true).apply()
         }
         useLanguageModel = p.getBoolean(KEY_LM, true)
+        useNeuralLm = p.getBoolean(KEY_NEURAL, true)
+    }
+
+    fun neuralPresent(ctx: Context): Boolean = NeuralRescorer.present(filesRoot(ctx))
+    fun neuralSizeMb(ctx: Context): Long = NeuralRescorer.files(filesRoot(ctx)).sumOf { it.length() } / 1_000_000
+
+    fun setUseNeuralLm(ctx: Context, on: Boolean) {
+        useNeuralLm = on
+        prefs(ctx).edit().putBoolean(KEY_NEURAL, on).apply()
+        if (!on) { neural?.close(); neural = null } else loadNeural(ctx)
+        Log.i(TAG, "neural LM = $on")
+    }
+
+    /** Loads layer 2c once; it does not depend on the acoustic engine. */
+    @Synchronized
+    private fun loadNeural(ctx: Context) {
+        if (neural != null || !useNeuralLm || !neuralPresent(ctx)) return
+        val (m, v, g) = NeuralRescorer.files(filesRoot(ctx))
+        neural = runCatching { NeuralRescorer(m, v, g) }
+            .onFailure { Log.e(TAG, "neural LM failed to load", it) }.getOrNull()
     }
 
     fun setUseLanguageModel(ctx: Context, on: Boolean) {
@@ -212,6 +239,7 @@ object Recognizer {
                 val n = lm ?: NgramLm.load(lmFile(ctx)).also { lm = it }
                 buildLayer2(ctx, engine, m.labels, n)
             }
+            loadNeural(ctx)
             lastError = null
             Log.i(TAG, "$engine ready in ${System.currentTimeMillis() - t0} ms")
             true
@@ -238,6 +266,8 @@ object Recognizer {
         val emissions: Emissions,
         val usedLanguageModel: Boolean = false,
         val beamMs: Long = 0,
+        /** Layer 2c's share of [beamMs]; 0 when it did not run. */
+        val neuralMs: Long = 0,
         /** The best sentences, best first; [text] is the first. One entry without the LM. */
         val candidates: List<Candidate> = emptyList(),
     ) {
@@ -255,16 +285,27 @@ object Recognizer {
         val b = beam
         val result = if (b == null) {
             val text = em.greedyDecode()
-            Result(text, acousticMs, seconds, engine, em, false, 0, Candidates.single(text))
+            Result(text, acousticMs, seconds, engine, em, false, 0, 0, Candidates.single(text))
         } else {
             val t0 = System.nanoTime()
             val history = contextWords(context, m.labels)
             var hyps = b.decode(em, N_BEST, history)
             speller?.let { hyps = it.rescore(hyps, history) }
+            var neuralMs = 0L
+            val nr = neural
+            if (nr != null && hyps.size > 1) {
+                val tn = System.nanoTime()
+                // the sentence so far, in the model's words, is the neural LM's context
+                val ctxText = normalizeWords(context ?: "", m.labels).takeLast(30).joinToString(" ")
+                hyps = runCatching { nr.rerank(hyps, ctxText).take(nr.topK) }
+                    .onFailure { Log.e(TAG, "neural rescoring failed, keeping layer 2b's order", it) }
+                    .getOrDefault(hyps)
+                neuralMs = (System.nanoTime() - tn) / 1_000_000
+            }
             val candidates = Candidates.from(hyps, MAX_CANDIDATES)
             val text = candidates.firstOrNull()?.text ?: em.greedyDecode()
             val beamMs = (System.nanoTime() - t0) / 1_000_000
-            Result(text, acousticMs + beamMs, seconds, engine, em, true, beamMs,
+            Result(text, acousticMs + beamMs, seconds, engine, em, true, beamMs, neuralMs,
                 candidates.ifEmpty { Candidates.single(text) })
         }
         _last.value = result

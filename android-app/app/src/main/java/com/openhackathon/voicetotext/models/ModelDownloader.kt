@@ -51,6 +51,12 @@ object ModelDownloader {
             "b9c45410d1a2215d0997862fab7a2c1aef5dd01e6dc1f1bb66a14e6c719c1426", "γλωσσικό μοντέλο"),
         ModelFile("el_homophones.bin", 10_498_299L,
             "9d6b6da6c8b86c671853a96f97b68e7c8795e1bec6e976825ce08c27404c2159", "ορθογραφία"),
+        ModelFile("el_gpt2.int8.onnx", 163_794_538L,
+            "02d09b774689a94792e6e8771fd013ce47cf8cf19b45873541686f10f6f47019", "νευρωνικό γλωσσικό μοντέλο"),
+        ModelFile("el_gpt2.vocab.json", 1_719_026L,
+            "6aac9ba2ea2bec874ed39cbf1c511466cb3e8b1ed2e1105ed100c99bf5242a2b", "λεξιλόγιο νευρωνικού"),
+        ModelFile("el_gpt2.merges.txt", 1_377_379L,
+            "79b67fa9426a6d70838a23304cea1b5acb0d700e4acf4af9190015a1ca9b2568", "λεξιλόγιο νευρωνικού"),
         ModelFile("test.wav", 311_098L,
             "f8c48eadf3625ddf46fedc0521ce688902dcc0f3bd3b821c8581070cc0688afc", "δοκιμαστικός ήχος"),
     )

@@ -92,6 +92,9 @@ data class ScreenState(
     val lmPresent: Boolean,
     val lmOn: Boolean,
     val lmMb: Long,
+    val neuralPresent: Boolean,
+    val neuralOn: Boolean,
+    val neuralMb: Long,
     val bubbleOn: Boolean,
     val recording: Boolean,
     val busy: Boolean,
@@ -115,6 +118,7 @@ interface MainActions {
     fun importFiles()
     fun selectEngine(e: Recognizer.Engine)
     fun setLanguageModel(on: Boolean)
+    fun setNeuralLm(on: Boolean)
     fun runCheck()
     fun download()
     fun cancelDownload()
@@ -428,6 +432,27 @@ private fun EngineCard(state: ScreenState, actions: MainActions) {
                     checked = state.lmOn && state.lmPresent,
                     onCheckedChange = { actions.setLanguageModel(it) },
                     enabled = state.lmPresent,
+                )
+            }
+            Spacer(Modifier.height(12.dp))
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text("Νευρωνικό μοντέλο συμφραζομένων", fontSize = 16.sp, color = OnBg)
+                    Text(
+                        when {
+                            !state.neuralPresent -> "Λείπει το el_gpt2 (κατέβασέ το από τα Μοντέλα)."
+                            !state.lmOn -> "Χρειάζεται το γλωσσικό μοντέλο ανοιχτό."
+                            state.neuralOn -> "Ενεργό, ${state.neuralMb} MB. Διαλέγει ανάμεσα στις καλύτερες " +
+                                "προτάσεις με βάση όλη τη φράση. Δεν αλλάζει ό,τι ακούστηκε."
+                            else -> "Ανενεργό."
+                        },
+                        fontSize = 14.sp, color = OnMuted,
+                    )
+                }
+                Switch(
+                    checked = state.neuralOn && state.neuralPresent && state.lmOn,
+                    onCheckedChange = { actions.setNeuralLm(it) },
+                    enabled = state.neuralPresent && state.lmOn,
                 )
             }
         }
