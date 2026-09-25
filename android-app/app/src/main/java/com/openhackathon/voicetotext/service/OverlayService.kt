@@ -16,7 +16,6 @@ import android.app.Service
 import android.content.Context
 import android.content.Intent
 import android.content.pm.ServiceInfo
-import android.content.res.ColorStateList
 import android.graphics.Color
 import android.graphics.PixelFormat
 import android.graphics.Typeface
@@ -46,7 +45,6 @@ import android.widget.TextView
 import android.widget.Toast
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
-import androidx.core.widget.ImageViewCompat
 import java.util.concurrent.Callable
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
@@ -74,8 +72,10 @@ import kotlin.math.abs
  * sentence. Floating, nothing is typed until the person picks one: below [CONFIDENCE_THRESHOLD]
  * the bubble instead grows a header showing the top guess in full and a few alternatives under
  * it, and the tapped one is typed, after which the window shrinks back to exactly where it was.
- * The docked bar is a flat blue rectangle with white icons; the mic turns red while it records
- * and, with Undo, orange on an error, so the two big corner targets still read at a glance.
+ * The docked bar's icons are always plain white; the rectangle itself carries the colour -
+ * solid blue when ready, solid red while recording, solid orange on an error or for a moment
+ * after Undo is tapped - and it never shows the loading state's muted grey-blue, only that
+ * fixed palette. Floating keeps its own separate, unrelated per-state circle colour.
  */
 class OverlayService : Service() {
 
@@ -99,9 +99,7 @@ class OverlayService : Service() {
     private lateinit var suggestionHeader: TextView
     private lateinit var dockTrack: View
     private lateinit var undoButton: FrameLayout
-    private lateinit var undoIcon: ImageView
     private lateinit var undoSatellite: FrameLayout
-    private lateinit var undoSatelliteIcon: ImageView
     private lateinit var params: WindowManager.LayoutParams
 
     private val bg = GradientDrawable().apply { shape = GradientDrawable.RECTANGLE }
@@ -179,6 +177,10 @@ class OverlayService : Service() {
     private var satDy = 0
     private val retractSatellite = Runnable { hideSatellite(animate = true) }
 
+    /** Overrides the docked rectangle's state colour for a moment, e.g. Undo's orange flash. */
+    private var dockFlash: Int? = null
+    private val clearDockFlash = Runnable { dockFlash = null; updateDockColors() }
+
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onCreate() {
@@ -242,9 +244,7 @@ class OverlayService : Service() {
         suggestionBox.background = panelBg
         dockTrack = root.findViewById(R.id.dock_track)
         undoButton = root.findViewById(R.id.undo_button)
-        undoIcon = root.findViewById(R.id.undo_icon)
         undoSatellite = root.findViewById(R.id.undo_satellite)
-        undoSatelliteIcon = root.findViewById(R.id.undo_satellite_icon)
         trackBg.cornerRadius = barHeight() / 2f
         dockTrack.background = trackBg
         undoButton.background = dockButtonBg
@@ -252,8 +252,8 @@ class OverlayService : Service() {
         undoSatellite.background = secondaryBg()
         pressFeedback(undoButton)
         pressFeedback(undoSatellite)
-        undoButton.setOnClickListener { onUndo(undoIcon) }
-        undoSatellite.setOnClickListener { onUndo(undoSatelliteIcon) }
+        undoButton.setOnClickListener { onUndo() }
+        undoSatellite.setOnClickListener { onUndo() }
         applyColor(State.LOADING.color)
         buildStrip()
 
@@ -306,29 +306,31 @@ class OverlayService : Service() {
         false
     }
 
+    /** Floating circle's own per-state colour, animated by [colorAnim]; docked never reads this. */
     private fun applyColor(c: Int) {
         currentColor = c
-        // docked, the rectangle stays flat blue regardless of state; only the icons speak up
-        bg.setColor(if (docked) DOCK_BLUE else c)
+        if (!docked) bg.setColor(c)
         ring.setColor(c and 0x00FFFFFF or 0x55000000)
-        updateIconTints()
     }
 
-    private fun tint(v: ImageView, c: Int) = ImageViewCompat.setImageTintList(v, ColorStateList.valueOf(c))
+    /** Blue/Red/Orange only - the loading state's muted grey-blue never reaches the rectangle. */
+    private fun dockedBgColor(s: State): Int = when (s) {
+        State.LISTENING -> DOCK_RED
+        State.ERROR -> DOCK_ORANGE
+        else -> DOCK_BLUE
+    }
 
-    /** Floating: the icons are always white, the coloured background already says everything.
-     *  Docked: the bar is always blue, so the mic icon turns red while recording and orange on
-     *  an error, and Undo turns orange on an error too, otherwise both stay white. */
-    private fun updateIconTints() {
-        val micColor = if (!docked) ICON_WHITE else when (state) {
-            State.LISTENING -> ICON_RED
-            State.ERROR -> ICON_ORANGE
-            else -> ICON_WHITE
-        }
-        tint(icon, micColor)
-        val undoColor = if (docked && state == State.ERROR) ICON_ORANGE else ICON_WHITE
-        tint(undoIcon, undoColor)
-        tint(undoSatelliteIcon, undoColor)
+    /**
+     * Docked, the mic button, the Undo button and the track behind them are one flat colour for
+     * the state (or [dockFlash] while it is set); the icons are never touched, they stay the
+     * vector's own solid white. Floating is untouched by this - see [applyColor].
+     */
+    private fun updateDockColors() {
+        if (!docked) return
+        val c = dockFlash ?: dockedBgColor(state)
+        bg.setColor(c)
+        trackBg.setColor(c)
+        dockButtonBg.setColor(c)
     }
 
     private fun setState(s: State) {
@@ -340,6 +342,8 @@ class OverlayService : Service() {
             addUpdateListener { applyColor(it.animatedValue as Int) }
             start()
         }
+        // the docked rectangle snaps to its flat colour instead of crossfading through one
+        updateDockColors()
         icon.setImageResource(if (s == State.LISTENING) R.drawable.ic_stop else R.drawable.ic_mic)
         icon.visibility = if (s == State.THINKING) View.GONE else View.VISIBLE
         showSpinner()
@@ -465,7 +469,7 @@ class OverlayService : Service() {
                 bubbleY = rest?.get(1) ?: params.y
                 circleRest = null
                 docked = true
-                applyColor(currentColor) // the rectangle turns flat blue, the icons follow suit
+                updateDockColors() // the rectangle snaps straight to its state colour
                 // Setting the field's text restarts the keyboard, which can read as closed for
                 // a poll or two: only a choice hidden for longer than that is stale.
                 if (choice != null && SystemClock.uptimeMillis() - hiddenSince > CHOICE_GRACE_MS) {
@@ -482,7 +486,7 @@ class OverlayService : Service() {
             imeHeight = 0
             panelExtra = 0
             hiddenSince = SystemClock.uptimeMillis()
-            applyColor(currentColor) // back to the state colour, no more flat blue
+            applyColor(currentColor) // the floating circle returns to its own colour
             updateOptions()
             shapeCircle()
             if (suggestions.isNotEmpty()) { updateSuggestionHeader(); expandCircle() }
@@ -1025,11 +1029,15 @@ class OverlayService : Service() {
     }
 
     /** Either Undo button: takes the last typed phrase back out of the field. */
-    private fun onUndo(tapped: ImageView) {
+    private fun onUndo() {
         hideSatellite(animate = false)
-        // a quick orange flash on the button that was actually tapped, then back to its state colour
-        tint(tapped, ICON_ORANGE)
-        main.postDelayed({ updateIconTints() }, UNDO_FLASH_MS)
+        // docked, the whole rectangle flashes orange for a moment as the warning/undo colour
+        if (docked) {
+            main.removeCallbacks(clearDockFlash)
+            dockFlash = DOCK_ORANGE
+            updateDockColors()
+            main.postDelayed(clearDockFlash, UNDO_FLASH_MS)
+        }
         when (TypingAccessibilityService.undoLastInjection()) {
             "undone" -> {
                 // the open word choice and any late LLM answer were about the removed sentence
@@ -1267,12 +1275,11 @@ class OverlayService : Service() {
         private const val MAX_SUGGESTIONS = 3
         /** How long the floating Undo bubble stays out if it is not touched. */
         private const val SATELLITE_MS = 5_000L
-        /** The docked bar's fixed background: only its icons change colour, never this. */
+        /** The docked rectangle's three flat colours - Default/Ready, Recording, Undo/Warning. */
         private const val DOCK_BLUE = 0xFF3D5FE0.toInt()
-        private const val ICON_WHITE = Color.WHITE
-        private const val ICON_RED = 0xFFE5484D.toInt()
-        private const val ICON_ORANGE = 0xFFF2820D.toInt()
-        /** How long an Undo icon stays orange after a tap before it reverts to its state colour. */
+        private const val DOCK_RED = 0xFFE5484D.toInt()
+        private const val DOCK_ORANGE = 0xFFF2820D.toInt()
+        /** How long the rectangle's orange Undo flash lasts before it reverts to the state colour. */
         private const val UNDO_FLASH_MS = 260L
         @Volatile var running = false
     }

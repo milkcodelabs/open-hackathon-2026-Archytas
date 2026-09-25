@@ -27,8 +27,9 @@
         android:alpha="0"
         android:background="@drawable/bubble_ring" />
 
-    <!-- Floating only: slides out from behind the circle after text is typed. Lower
-         elevation than the circle, so it is hidden behind it while retracted. -->
+    <!-- Floating only: slides out from behind the circle after text is typed. Declared before
+         the circle below, so draw order (not elevation - both are flat) keeps it hidden behind
+         the circle while retracted. -->
     <FrameLayout
         android:id="@+id/undo_satellite"
         android:layout_width="48dp"
@@ -36,8 +37,9 @@
         android:layout_gravity="top|start"
         android:clickable="true"
         android:contentDescription="αναίρεση"
-        android:elevation="6dp"
+        android:elevation="0dp"
         android:focusable="false"
+        android:stateListAnimator="@null"
         android:visibility="gone">
 
         <ImageView
@@ -57,10 +59,11 @@
         android:layout_gravity="start|bottom"
         android:clickable="true"
         android:contentDescription="αναίρεση"
-        android:elevation="10dp"
+        android:elevation="0dp"
         android:focusable="false"
         android:minWidth="48dp"
         android:minHeight="48dp"
+        android:stateListAnimator="@null"
         android:visibility="gone">
 
         <ImageView
@@ -72,15 +75,18 @@
             android:src="@drawable/ic_undo" />
     </FrameLayout>
 
-    <!-- The mic: centred in the floating frame; docked, pinned to end|bottom from code. -->
+    <!-- The mic: centred in the floating frame; docked, pinned to end|bottom from code. Flat,
+         no drop shadow - declared last among the three buttons, so it still draws on top of
+         the Undo satellite behind it. -->
     <FrameLayout
         android:id="@+id/circle"
         android:layout_width="68dp"
         android:layout_height="68dp"
         android:layout_gravity="center"
-        android:elevation="10dp"
+        android:elevation="0dp"
         android:minWidth="48dp"
-        android:minHeight="48dp">
+        android:minHeight="48dp"
+        android:stateListAnimator="@null">
 
         <ImageView
             android:id="@+id/icon"
