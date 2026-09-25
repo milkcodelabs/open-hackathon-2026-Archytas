@@ -1,0 +1,27 @@
+@"
+# --- SECRETS & CREDENTIALS (NEVER COMMIT) ---
+.env
+*.env
+!.env.example
+*credentials*.json
+*service-account*.json
+*secret*.json
+
+# --- PYTHON BACKEND ---
+**/env/
+**/venv/
+**/.venv/
+__pycache__/
+*.py[cod]
+
+# --- ANDROID STUDIO / GRADLE ---
+*.iml
+.gradle/
+**/local.properties
+**/.idea/
+.DS_Store
+**/build/
+captures/
+.externalNativeBuild/
+.cxx/
+"@ | Out-File -FilePath .gitignore -Encoding utf8
