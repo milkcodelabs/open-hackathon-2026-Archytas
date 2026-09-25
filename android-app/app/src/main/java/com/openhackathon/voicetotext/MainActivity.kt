@@ -143,6 +143,7 @@ class MainActivity : ComponentActivity() {
             personalOn = Recognizer.usePersonal,
             personalMb = Recognizer.personalSizeMb(this),
             personalInfo = Recognizer.personalInfo(this),
+            personalMissingMb = ModelDownloader.missingPersonal(this).sumOf { it.bytes } / 1_000_000,
             llmOn = LlmCorrector.enabled,
             llmProvider = LlmCorrector.provider,
             llmKeys = LlmCorrector.Provider.entries.filter { LlmCorrector.hasKey(it) }.toSet(),
@@ -235,6 +236,15 @@ class MainActivity : ComponentActivity() {
         override fun download() = startDownload()
 
         override fun cancelDownload() { ModelDownloader.cancel(); tick++ }
+
+        override fun downloadPersonal() {
+            ModelDownloader.startPersonal(this@MainActivity) { ok ->
+                lifecycleScope.launch {
+                    if (ok) { Recognizer.dropAcoustic(); reloadBubble() }
+                    tick++
+                }
+            }
+        }
     }
 
     private fun reloadBubble() {

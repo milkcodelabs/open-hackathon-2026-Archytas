@@ -103,6 +103,8 @@ data class ScreenState(
     val personalOn: Boolean,
     val personalMb: Long,
     val personalInfo: String,
+    /** MB of the personal model still to download (0 when it is complete on the phone). */
+    val personalMissingMb: Long,
     val llmOn: Boolean,
     val llmProvider: LlmCorrector.Provider,
     /** Providers whose API key was built into the app. */
@@ -138,6 +140,7 @@ interface MainActions {
     fun runCheck()
     fun download()
     fun cancelDownload()
+    fun downloadPersonal()
 }
 
 @Composable
@@ -396,6 +399,21 @@ private fun ModelsCard(state: ScreenState, actions: MainActions) {
                     Text("Η λήψη σταμάτησε: $it", fontSize = 14.sp, color = Listening, modifier = Modifier.padding(top = 6.dp))
                 }
             }
+        }
+        Spacer(Modifier.height(14.dp))
+        StatusRow(
+            ok = state.personalMissingMb == 0L,
+            text = if (state.personalMissingMb == 0L) "Προσωπικό μοντέλο στο κινητό (${state.personalMb} MB)"
+            else "Προσωπικό μοντέλο: προαιρετικό",
+        )
+        if (state.personalMissingMb > 0 && !p.running) {
+            Spacer(Modifier.height(8.dp))
+            OutlinedButton(
+                onClick = { actions.downloadPersonal() },
+                modifier = Modifier.fillMaxWidth().height(52.dp),
+            ) { Text("Λήψη προσωπικού μοντέλου (${state.personalMissingMb} MB)", fontSize = 16.sp) }
+            Text("Εκπαιδευμένο στη φωνή του ομιλητή. Μετά τη λήψη ανοίγει και κλείνει από το «Προσωπικό μοντέλο».",
+                fontSize = 13.sp, color = OnMuted, modifier = Modifier.padding(top = 4.dp))
         }
         Spacer(Modifier.height(8.dp))
         OutlinedButton(onClick = { actions.importFiles() }, modifier = Modifier.fillMaxWidth().height(52.dp)) {
