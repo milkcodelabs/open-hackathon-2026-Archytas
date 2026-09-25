@@ -3,8 +3,6 @@ package com.openhackathon.voicetotext.service
 import com.openhackathon.voicetotext.asr.Recognizer
 import com.openhackathon.voicetotext.audio.AudioRecorder
 import com.openhackathon.voicetotext.R
-import android.animation.Animator
-import android.animation.AnimatorListenerAdapter
 import android.animation.ArgbEvaluator
 import android.animation.ValueAnimator
 import android.app.Notification
@@ -21,6 +19,7 @@ import android.os.Build
 import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
+import android.util.DisplayMetrics
 import android.util.Log
 import android.view.Gravity
 import android.view.LayoutInflater
@@ -28,16 +27,13 @@ import android.view.MotionEvent
 import android.view.View
 import android.view.ViewConfiguration
 import android.view.WindowManager
-import android.view.animation.DecelerateInterpolator
 import android.widget.FrameLayout
 import android.widget.ImageView
 import android.widget.ProgressBar
 import android.widget.Toast
 import androidx.core.view.ViewCompat
-import androidx.core.view.WindowInsetsAnimationCompat
 import androidx.core.view.WindowInsetsCompat
 import kotlin.math.abs
-import kotlin.math.roundToInt
 
 /**
  * The floating microphone. Lives above every app as a foreground service.
@@ -45,7 +41,8 @@ import kotlin.math.roundToInt
  * Tap to listen (the circle turns red and pulses), tap again to transcribe (amber, spinner),
  * and the text is typed into whatever field has focus. Long press runs the pushed test.wav
  * instead of the mic. Drag it anywhere; it snaps to the nearer side when released.
- * When the software keyboard is open, the circle stretches into a bar parked just above it.
+ * When the software keyboard is open, the circle is swapped for a bar docked on top of it,
+ * and swapped back to its previous position when the keyboard closes.
  */
 class OverlayService : Service() {
 
@@ -71,15 +68,12 @@ class OverlayService : Service() {
     private val main = Handler(Looper.getMainLooper())
     private val argb = ArgbEvaluator()
 
-    /** 0 = floating circle, 1 = keyboard-extension bar. */
-    private var shapeT = 0f
-    private var shapeAnim: ValueAnimator? = null
+    /** True while the keyboard is open and the overlay is the bar above it. */
     private var docked = false
+    /** Where the circle was before docking; only written on the circle -> bar swap. */
     private var bubbleX = 0
     private var bubbleY = 0
-    private var lastImeBottom = 0
-    private var imePeak = 0
-    private var imeAnimRunning = false
+    private var imeHeight = 0
 
     private var state = State.LOADING
     private var currentColor = State.LOADING.color
@@ -121,8 +115,9 @@ class OverlayService : Service() {
 
     override fun onDestroy() {
         running = false
-        colorAnim?.cancel(); pulseAnim?.cancel(); shapeAnim?.cancel()
+        colorAnim?.cancel(); pulseAnim?.cancel()
         main.removeCallbacks(imePoll)
+        main.removeCallbacks(longPress)
         if (state == State.LISTENING) runCatching { recorder.stop() }
         runCatching { wm.removeView(root) }
         super.onDestroy()
@@ -158,21 +153,20 @@ class OverlayService : Service() {
                 layoutInDisplayCutoutMode =
                     WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
             }
-            // Position ourselves; do not let the WM shrink this window around the IME.
+            // x/y are absolute display coordinates; do not let the WM inset or shrink this window.
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
                 setFitInsetsTypes(0)
             }
         }
         bubbleX = params.x
         bubbleY = params.y
+        shapeCircle()
 
         root.setOnTouchListener(::onTouch)
         root.alpha = 0f
         wm.addView(root, params)
         listenForIme()
-        layoutOverlay()
         root.animate().alpha(1f).setDuration(220).start()
-        main.post(imePoll)
     }
 
     private fun applyColor(c: Int) {
@@ -231,176 +225,101 @@ class OverlayService : Service() {
     private fun barMargin() = dp(8)
     private fun barRadius() = dp(16).toFloat()
     private fun imeThreshold() = dp(64)
-    private fun lerp(a: Int, b: Int, t: Float) = (a + (b - a) * t).roundToInt()
-    private fun lerp(a: Float, b: Float, t: Float) = a + (b - a) * t
 
+    @Suppress("DEPRECATION")
+    private fun realMetrics() = DisplayMetrics().also { wm.defaultDisplay.getRealMetrics(it) }
+
+    // Same frame the IME insets in keyboardHeight() are measured against.
     private fun screenW(): Int =
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) wm.maximumWindowMetrics.bounds.width()
-        else resources.displayMetrics.widthPixels
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) wm.currentWindowMetrics.bounds.width()
+        else realMetrics().widthPixels
 
     private fun screenH(): Int =
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) wm.maximumWindowMetrics.bounds.height()
-        else resources.displayMetrics.heightPixels
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) wm.currentWindowMetrics.bounds.height()
+        else realMetrics().heightPixels
 
     private fun listenForIme() {
-        ViewCompat.setOnApplyWindowInsetsListener(root) { _, insets ->
-            applyImeInsets(insets, fromAnimation = false)
-            insets
-        }
-        ViewCompat.setWindowInsetsAnimationCallback(
-            root,
-            object : WindowInsetsAnimationCompat.Callback(
-                WindowInsetsAnimationCompat.Callback.DISPATCH_MODE_CONTINUE_ON_SUBTREE,
-            ) {
-                override fun onStart(
-                    animation: WindowInsetsAnimationCompat,
-                    bounds: WindowInsetsAnimationCompat.BoundsCompat,
-                ): WindowInsetsAnimationCompat.BoundsCompat {
-                    if (animation.typeMask and WindowInsetsCompat.Type.ime() != 0) {
-                        imeAnimRunning = true
-                    }
-                    return bounds
-                }
-
-                override fun onProgress(
-                    insets: WindowInsetsCompat,
-                    runningAnimations: MutableList<WindowInsetsAnimationCompat>,
-                ): WindowInsetsCompat {
-                    if (runningAnimations.any { it.typeMask and WindowInsetsCompat.Type.ime() != 0 }) {
-                        applyImeInsets(insets, fromAnimation = true)
-                    }
-                    return insets
-                }
-
-                override fun onEnd(animation: WindowInsetsAnimationCompat) {
-                    if (animation.typeMask and WindowInsetsCompat.Type.ime() != 0) {
-                        imeAnimRunning = false
-                        ViewCompat.getRootWindowInsets(root)?.let { applyImeInsets(it, fromAnimation = false) }
-                    }
-                }
-            },
-        )
-        ViewCompat.requestApplyInsets(root)
+        // Insets delivered to this small window are relative to the window, not the screen,
+        // so they are only a hint to re-measure; the poll catches changes they miss.
+        ViewCompat.setOnApplyWindowInsetsListener(root) { _, insets -> checkIme(); insets }
+        main.post(imePoll)
     }
 
     private val imePoll = object : Runnable {
         override fun run() {
-            if (!imeAnimRunning) {
-                val insets = currentImeInsets()
-                if (insets != null) applyImeInsets(insets, fromAnimation = false)
-            }
-            if (running) main.postDelayed(this, 48)
+            if (!running) return
+            checkIme()
+            main.postDelayed(this, 48)
         }
     }
 
-    private fun currentImeInsets(): WindowInsetsCompat? {
-        val fromView = ViewCompat.getRootWindowInsets(root)
-        val fromWm = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+    /**
+     * Keyboard height measured up from the bottom edge of the display, 0 when hidden.
+     * Needs Android 11: older releases only report the IME relative to this overlay window,
+     * which reads 0 as soon as the bar sits above the keyboard.
+     */
+    private fun keyboardHeight(): Int {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) return 0
+        val insets = runCatching {
             WindowInsetsCompat.toWindowInsetsCompat(wm.currentWindowMetrics.windowInsets)
-        } else null
-        return when {
-            fromView != null && fromWm != null -> {
-                // Overlay windows often report 0 IME on the view; WindowMetrics can still see it.
-                val type = WindowInsetsCompat.Type.ime()
-                if (fromView.getInsets(type).bottom >= fromWm.getInsets(type).bottom) fromView else fromWm
-            }
-            else -> fromView ?: fromWm
-        }
+        }.getOrNull() ?: return 0
+        val type = WindowInsetsCompat.Type.ime()
+        return if (insets.isVisible(type)) insets.getInsets(type).bottom else 0
     }
 
-    private fun applyImeInsets(insets: WindowInsetsCompat, fromAnimation: Boolean) {
-        val type = WindowInsetsCompat.Type.ime()
-        val bottom = insets.getInsets(type).bottom
-        val visible = insets.isVisible(type)
-        val open = bottom >= imeThreshold() || (fromAnimation && (visible || bottom > 0))
-        if (!fromAnimation &&
-            bottom == lastImeBottom &&
-            open == docked &&
-            shapeAnim?.isRunning != true &&
-            ((open && shapeT == 1f) || (!open && shapeT == 0f))
-        ) return
-
-        if (open) {
+    private fun checkIme() {
+        val kb = keyboardHeight()
+        if (kb >= imeThreshold()) {
             if (!docked) {
                 bubbleX = params.x
                 bubbleY = params.y
                 docked = true
             }
-            lastImeBottom = bottom
-            if (bottom > imePeak) imePeak = bottom
-            if (fromAnimation) {
-                shapeAnim?.cancel()
-                shapeT = (bottom.toFloat() / imePeak.coerceAtLeast(1)).coerceIn(0f, 1f)
-                layoutOverlay()
-            } else if (shapeT < 1f) {
-                animateShapeTo(1f)
-            } else {
-                layoutOverlay()
-            }
-        } else {
+            // also re-run while docked: the keyboard can change height (emoji panel, rotation)
+            imeHeight = kb
+            shapeBar()
+        } else if (docked) {
             docked = false
-            if (fromAnimation) {
-                lastImeBottom = bottom
-                shapeAnim?.cancel()
-                val peak = imePeak.coerceAtLeast(1)
-                shapeT = (bottom.toFloat() / peak).coerceIn(0f, 1f)
-                layoutOverlay()
-                if (bottom == 0) imePeak = 0
-            } else if (shapeT > 0f) {
-                animateShapeTo(0f)
-            } else {
-                lastImeBottom = 0
-                imePeak = 0
-            }
+            imeHeight = 0
+            shapeCircle()
         }
     }
 
-    private fun animateShapeTo(target: Float) {
-        if (shapeT == target && shapeAnim?.isRunning != true) {
-            layoutOverlay()
-            return
-        }
-        shapeAnim?.cancel()
-        shapeAnim = ValueAnimator.ofFloat(shapeT, target).apply {
-            duration = 280
-            interpolator = DecelerateInterpolator()
-            addUpdateListener {
-                shapeT = it.animatedValue as Float
-                layoutOverlay()
-            }
-            addListener(object : AnimatorListenerAdapter() {
-                override fun onAnimationEnd(animation: Animator) {
-                    if (target == 0f) {
-                        lastImeBottom = 0
-                        imePeak = 0
-                    }
-                }
-            })
-            start()
-        }
+    private fun shapeBar() {
+        val w = screenW() - 2 * barMargin()
+        val h = barHeight()
+        val y = (screenH() - imeHeight - h).coerceAtLeast(0)
+        placeWindow(barMargin(), y, w, h)
+        shapeInner(w, h, barRadius())
     }
 
-    /** Width, height, corner radius, and Y all follow [shapeT]; Y targets just above the IME. */
-    private fun layoutOverlay() {
-        val t = shapeT
-        val w = lerp(bubbleSize(), screenW() - 2 * barMargin(), t)
-        val h = lerp(bubbleSize(), barHeight(), t)
-        val x = lerp(bubbleX, barMargin(), t)
-        val gap = dp(4)
-        val dockY = (screenH() - lastImeBottom - h - gap).coerceAtLeast(dp(48))
-        val y = lerp(bubbleY, dockY, t)
-        params.width = w
-        params.height = h
+    private fun shapeCircle() {
+        val s = bubbleSize()
+        // clamp in case the screen rotated while docked
+        val x = bubbleX.coerceIn(0, (screenW() - s).coerceAtLeast(0))
+        val y = bubbleY.coerceIn(0, (screenH() - s).coerceAtLeast(0))
+        placeWindow(x, y, s, s)
+        shapeInner(circleSize(), circleSize(), circleSize() / 2f)
+    }
+
+    private fun placeWindow(x: Int, y: Int, w: Int, h: Int) {
+        if (params.x == x && params.y == y && params.width == w && params.height == h) return
         params.x = x
         params.y = y
-        runCatching { wm.updateViewLayout(root, params) }
+        params.width = w
+        params.height = h
+        if (root.isAttachedToWindow) runCatching { wm.updateViewLayout(root, params) }
+    }
 
+    private fun shapeInner(w: Int, h: Int, radius: Float) {
         val lp = circle.layoutParams as FrameLayout.LayoutParams
-        lp.width = lerp(circleSize(), w, t)
-        lp.height = lerp(circleSize(), h, t)
-        lp.gravity = Gravity.CENTER
-        circle.layoutParams = lp
-        bg.cornerRadius = lerp(circleSize() / 2f, barRadius(), t)
+        if (lp.width != w || lp.height != h) {
+            lp.width = w
+            lp.height = h
+            lp.gravity = Gravity.CENTER
+            circle.layoutParams = lp
+        }
+        bg.cornerRadius = radius
     }
 
     // ------------------------------------------------------------------ touch
@@ -424,45 +343,36 @@ class OverlayService : Service() {
             MotionEvent.ACTION_MOVE -> {
                 val dx = e.rawX - downX
                 val dy = e.rawY - downY
-                if (docked || shapeT > 0.15f) {
+                if (docked) {
+                    // the bar stays pinned to the keyboard
                     if (abs(dx) > slop || abs(dy) > slop) main.removeCallbacks(longPress)
                 } else if (moved || abs(dx) > slop || abs(dy) > slop) {
                     moved = true
                     main.removeCallbacks(longPress)
                     params.x = startX + dx.toInt()
                     params.y = startY + dy.toInt()
-                    wm.updateViewLayout(root, params)
+                    runCatching { wm.updateViewLayout(root, params) }
                 }
             }
             MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
                 main.removeCallbacks(longPress)
                 circle.animate().scaleX(1f).scaleY(1f).setDuration(140).start()
-                if (moved && !docked && shapeT == 0f) snapToEdge()
+                if (moved) { if (!docked) snapToEdge() }
                 else if (!longPressed && e.actionMasked == MotionEvent.ACTION_UP) { v.performClick(); bump(); onTap() }
             }
         }
         return true
     }
 
-    /** Slide to the nearer side and stay clear of the screen edges. */
+    /** Jump to the nearer side and stay clear of the screen edges. */
     private fun snapToEdge() {
-        val screenW = resources.displayMetrics.widthPixels
-        val screenH = resources.displayMetrics.heightPixels
-        val w = if (root.width > 0) root.width else dp(96)
-        val h = if (root.height > 0) root.height else dp(96)
-        val target = if (params.x + w / 2 < screenW / 2) dp(8) else screenW - w - dp(8)
-        params.y = params.y.coerceIn(dp(48), screenH - h - dp(72))
-        ValueAnimator.ofInt(params.x, target).apply {
-            duration = 220
-            interpolator = DecelerateInterpolator()
-            addUpdateListener {
-                params.x = it.animatedValue as Int
-                bubbleX = params.x
-                bubbleY = params.y
-                runCatching { wm.updateViewLayout(root, params) }
-            }
-            start()
-        }
+        val sw = screenW()
+        val sh = screenH()
+        val w = params.width
+        val h = params.height
+        params.x = if (params.x + w / 2 < sw / 2) dp(8) else sw - w - dp(8)
+        params.y = params.y.coerceIn(dp(48), (sh - h - dp(72)).coerceAtLeast(dp(48)))
+        runCatching { wm.updateViewLayout(root, params) }
     }
 
     // ------------------------------------------------------------------ actions
