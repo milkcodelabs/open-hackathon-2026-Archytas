@@ -8,7 +8,7 @@ Audio never leaves the device; the network is used only once, to download the mo
 
 - **Layer 1, acoustic model (CTC):** Meta Omnilingual ASR CTC 300M, int8, restricted to the
   39 Greek symbols inside the model file (`omni.onnx`). It outputs a probability for every
-  Greek letter every 20 ms. wav2vec2 Greek and Whisper can be picked instead in the app.
+  Greek letter every 20 ms. wav2vec2 Greek can be picked instead in the app.
 - **Layer 2a, beam search + Greek 3-gram language model** (`decoding/BeamSearch.kt`,
   `el_3gram.gvtlm`, 300k words): turns the letter probabilities into the most likely
   sentences. It continues the text already in the field and knows the speaker's own words
@@ -16,6 +16,9 @@ Audio never leaves the device; the network is used only once, to download the mo
 - **Layer 2b, spelling** (`decoding/SpellingRescorer.kt`, `el_homophones.bin`): the acoustic
   model cannot tell ι/η/υ/ει/οι, ο/ω, ε/αι apart; for every word the real spellings of the
   same sound are offered and the language model picks, in context.
+- **Candidate sentences** (`decoding/Candidates.kt`): the ten best sentences, with their
+  relative probability and the words that differ from the best one highlighted. Tap one to
+  choose it and copy it.
 
 About 1 second for a 5-second sentence on a Samsung Galaxy A55.
 
@@ -26,8 +29,8 @@ About 1 second for a 5-second sentence on a Samsung Galaxy A55.
 | `MainActivity`, `ui/` | the setup screen (Jetpack Compose) |
 | `service/` | the floating bubble (`OverlayService`) and the typing service (`TypingAccessibilityService`) |
 | `audio/` | microphone recording |
-| `asr/` | acoustic models (`CtcModel`, `WhisperModel`), `Emissions`, and `Recognizer`, which owns them |
-| `decoding/` | layer 2: beam search, n-gram LM, homophone index, spelling pass |
+| `asr/` | the acoustic model (`CtcModel`), `Emissions`, and `Recognizer`, which owns it |
+| `decoding/` | layer 2: beam search, n-gram LM, homophone index, spelling pass, the candidate sentences |
 | `models/` | `ModelDownloader`: fetches the models from GitHub Releases |
 
 ## Build

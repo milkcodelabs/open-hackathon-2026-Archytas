@@ -32,7 +32,6 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
-import java.util.Locale
 
 /**
  * Setup screen. The interface people actually use is the floating bubble
@@ -57,7 +56,7 @@ class MainActivity : ComponentActivity() {
 
     /**
      * Copies model files the user picks into the app's own directory: the fallback when the
-     * phone cannot download them, and the way to add wav2vec2, Whisper or my_words.txt.
+     * phone cannot download them, and the way to add wav2vec2 or my_words.txt.
      */
     private val importFiles =
         registerForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
@@ -76,16 +75,13 @@ class MainActivity : ComponentActivity() {
     /** Files whose import changes layer 2 (language model, spellings, the speaker's words). */
     private val LAYER2_FILES = setOf("el_3gram.gvtlm", "el_homophones.bin", "my_words.txt")
 
-    /** Whisper's files go in a subdirectory; everything else sits at the top level. */
+    /** Every model file sits at the top level of the app's files folder. */
     private fun copyIn(uri: Uri): String? {
         val name = contentResolver.query(uri, null, null, null, null)?.use { c ->
             val i = c.getColumnIndex(OpenableColumns.DISPLAY_NAME)
             if (c.moveToFirst() && i >= 0) c.getString(i) else null
         } ?: return null
-        val whisperNames = setOf("encoder_model.onnx", "decoder_model.onnx", "tokens.json",
-            "mel_filters.bin", "whisper_meta.json")
-        val dest = if (name in whisperNames) File(Recognizer.whisperDir(this).also { it.mkdirs() }, name)
-        else File(Recognizer.filesRoot(this), name)
+        val dest = File(Recognizer.filesRoot(this), name)
         return runCatching {
             contentResolver.openInputStream(uri)!!.use { input ->
                 dest.outputStream().use { out -> input.copyTo(out, 1 shl 20) }
@@ -137,6 +133,9 @@ class MainActivity : ComponentActivity() {
             lmPresent = Recognizer.lmPresent(this),
             lmOn = Recognizer.useLanguageModel,
             lmMb = Recognizer.lmSizeMb(this),
+            neuralPresent = Recognizer.neuralPresent(this),
+            neuralOn = Recognizer.useNeuralLm,
+            neuralMb = Recognizer.neuralSizeMb(this),
             bubbleOn = OverlayService.running,
             recording = recording,
             busy = busy,
@@ -192,6 +191,14 @@ class MainActivity : ComponentActivity() {
             Recognizer.releaseUnused()
             reloadBubble()
             tick++
+        }
+
+        override fun setNeuralLm(on: Boolean) {
+            if (on == Recognizer.useNeuralLm) return
+            lifecycleScope.launch {
+                withContext(Dispatchers.Default) { Recognizer.setUseNeuralLm(this@MainActivity, on) }
+                tick++
+            }
         }
 
         override fun runCheck() = this@MainActivity.runCheck()
@@ -261,30 +268,15 @@ class MainActivity : ComponentActivity() {
         res.onSuccess { show(it) }.onFailure { result = "Σφάλμα: $it" }
     }
 
-    /** One place that renders a result, used by both the microphone and the fixture check. */
+    /**
+     * One place that renders a result, used by both the microphone and the fixture check.
+     * The sentences themselves are shown by the candidates list, which follows
+     * [Recognizer.lastResult], the stages by the analysis card; here only a note if nothing
+     * was heard.
+     */
     private fun show(res: Recognizer.Result) {
-        result = res.text.ifBlank { "(δεν αναγνωρίστηκε τίποτα)" }
-        detail = buildString {
-            appendLine(String.format(Locale.US, "μοντέλο    %s", Recognizer.label(this@MainActivity)))
-            appendLine(String.format(Locale.US, "ήχος       %.2f s", res.audioSeconds))
-            appendLine(String.format(Locale.US, "χρόνος     %d ms   RTF %.2f", res.inferenceMs, res.rtf))
-            if (res.usedLanguageModel) {
-                appendLine(String.format(Locale.US, "  εκ των οποίων beam+LM  %d ms", res.beamMs))
-            }
-            val em = res.emissions
-            if (em == null) {
-                appendLine()
-                appendLine("χωρίς εκπομπές: το Whisper δεν δίνει πίνακα")
-                appendLine("(T, V), άρα δεν τροφοδοτεί την προσαρμογή ομιλητή")
-            } else {
-                appendLine(String.format(Locale.US, "εκπομπές   %d x %d", em.numFrames, em.vocabSize))
-                appendLine(String.format(Locale.US, "κενά       %.1f%%", em.blankFraction() * 100))
-                appendLine()
-                for (w in em.greedyWords()) {
-                    appendLine(String.format(Locale.US, "  %-16s %.2f", w.text, w.confidence))
-                }
-            }
-        }
+        result = if (res.text.isBlank()) "(δεν αναγνωρίστηκε τίποτα)" else ""
+        detail = ""       // the analysis card at the bottom shows every stage and its timing
     }
 
     // ------------------------------------------------------------------ on-device check
