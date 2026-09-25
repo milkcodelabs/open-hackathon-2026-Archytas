@@ -175,13 +175,17 @@ class TypingAccessibilityService : AccessibilityService() {
 
         /**
          * Changes text delivered earlier: [old] becomes [new] in the field it went to, or on
-         * the clipboard if it cannot be found there any more.
+         * the clipboard if it cannot be found there any more (unless [copyIfMissing] is off).
          */
-        fun replace(ctx: Context, old: String, new: String): String {
+        fun replace(ctx: Context, old: String, new: String, copyIfMissing: Boolean = true): String {
             if (old.isBlank()) return deliver(ctx, new)
             runCatching { instance?.replace(old, new) }.getOrNull()?.let {
                 Log.i(TAG, "replaced via $it")
                 return "typed"
+            }
+            if (!copyIfMissing) {
+                Log.i(TAG, "typed text not found (edited or left the field), correction dropped")
+                return "missing"
             }
             val cm = ctx.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
             cm.setPrimaryClip(ClipData.newPlainText("greek_vt", new))

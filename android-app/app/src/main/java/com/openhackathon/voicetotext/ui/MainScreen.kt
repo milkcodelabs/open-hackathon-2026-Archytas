@@ -69,6 +69,7 @@ import com.openhackathon.voicetotext.R
 import com.openhackathon.voicetotext.asr.Recognizer
 import com.openhackathon.voicetotext.decoding.Candidate
 import com.openhackathon.voicetotext.decoding.Candidates
+import com.openhackathon.voicetotext.decoding.WordChoices
 import com.openhackathon.voicetotext.llm.LlmCorrector
 import com.openhackathon.voicetotext.models.ModelDownloader
 import com.openhackathon.voicetotext.ui.theme.Bg
@@ -276,6 +277,19 @@ private fun CandidatesCard(state: ScreenState) {
                     }
                 }
             }
+            // what the bubble above the keyboard would ask about for this result
+            val spots = remember(res) { WordChoices.find(candidates.first().words, candidates) }
+            Spacer(Modifier.height(10.dp))
+            Text(
+                if (spots.isEmpty()) {
+                    "Το εικονίδιο δεν θα ρωτούσε: όλες οι λέξεις πάνω από ${(WordChoices.THRESHOLD * 100).toInt()}%."
+                } else {
+                    "Το εικονίδιο θα ρωτούσε: " + spots.joinToString("  ·  ") { s ->
+                        s.options.joinToString(" / ") { o -> "${o.text.ifEmpty { "(τίποτα)" }} ${(o.probability * 100).toInt()}%" }
+                    }
+                },
+                fontSize = 13.sp, color = OnMuted, lineHeight = 18.sp,
+            )
         } else if (!state.lmOn) {
             Spacer(Modifier.height(10.dp))
             Text("Άνοιξε το γλωσσικό μοντέλο για να βλέπεις εναλλακτικές προτάσεις.", fontSize = 14.sp, color = OnMuted)

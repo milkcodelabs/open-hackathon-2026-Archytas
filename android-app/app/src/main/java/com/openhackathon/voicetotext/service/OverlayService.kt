@@ -24,6 +24,7 @@ import android.os.Build
 import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
+import android.os.SystemClock
 import android.util.DisplayMetrics
 import android.util.Log
 import android.view.Gravity
@@ -43,6 +44,9 @@ import android.widget.TextView
 import android.widget.Toast
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
+import java.util.concurrent.Callable
+import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
 import kotlin.math.abs
 
 /**
@@ -56,7 +60,9 @@ import kotlin.math.abs
  * When the typed sentence has words the recognizer was unsure of, the mic in the bar shrinks
  * to a round button on the right and the alternatives for the first such word slide in beside
  * it; tapping one rewrites that word in the field, then the next unsure word is offered.
- * With the LLM switch on and a network, the sentence is first checked by [LlmCorrector].
+ * With the LLM switch on and a network, the sentence is first checked by [LlmCorrector]; if
+ * it is slow, the phone's sentence is typed at once (a ring spins around the mic) and the
+ * answer replaces it when it comes, with the phone's words offered back as the alternative.
  */
 class OverlayService : Service() {
 
@@ -106,6 +112,20 @@ class OverlayService : Service() {
     private var optionsShown = false
     private var optionsProgress = 0f
     private var optionsAnim: ValueAnimator? = null
+    /** When the open choice was last hidden by the keyboard going away. */
+    private var hiddenSince = 0L
+
+    /** Bumped by every dictation, so a late LLM answer for an older one is dropped. */
+    private var dictation = 0
+    /** The sentence just typed, which a late LLM answer may still replace. */
+    private class Typed(val id: Int, val res: Recognizer.Result, val words: List<String>) {
+        val text = words.joinToString(" ")
+        /** The person tapped a choice: their decision wins over a late answer. */
+        var decided = false
+    }
+    private var lastTyped: Typed? = null
+    private var llmPending = false
+    private val llmPool = Executors.newCachedThreadPool()
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -143,6 +163,7 @@ class OverlayService : Service() {
     override fun onDestroy() {
         running = false
         colorAnim?.cancel(); pulseAnim?.cancel(); optionsAnim?.cancel()
+        llmPool.shutdownNow()
         main.removeCallbacks(imePoll)
         main.removeCallbacks(longPress)
         if (state == State.LISTENING) runCatching { recorder.stop() }
@@ -214,13 +235,24 @@ class OverlayService : Service() {
         }
         icon.setImageResource(if (s == State.LISTENING) R.drawable.ic_stop else R.drawable.ic_mic)
         icon.visibility = if (s == State.THINKING) View.GONE else View.VISIBLE
-        spinner.visibility = if (s == State.THINKING) View.VISIBLE else View.GONE
+        showSpinner()
         root.alpha = restingAlpha()
         if (s == State.LISTENING) startPulse() else stopPulse()
         updateOptions()
     }
 
     private fun restingAlpha() = if (state == State.LOADING) 0.65f else 1f
+
+    /** The spinner alone while transcribing; around the mic while a late LLM answer is awaited. */
+    private fun showSpinner() {
+        val on = state == State.THINKING || (state == State.IDLE && llmPending)
+        spinner.visibility = if (on) View.VISIBLE else View.GONE
+    }
+
+    private fun setLlmPending(on: Boolean) {
+        llmPending = on
+        showSpinner()
+    }
 
     private fun startPulse() {
         stopPulse()
@@ -317,6 +349,12 @@ class OverlayService : Service() {
                 bubbleX = params.x
                 bubbleY = params.y
                 docked = true
+                // Setting the field's text restarts the keyboard, which can read as closed for
+                // a poll or two: only a choice hidden for longer than that is stale.
+                if (choice != null && SystemClock.uptimeMillis() - hiddenSince > CHOICE_GRACE_MS) {
+                    Log.i(TAG, "choices dropped: the keyboard was closed")
+                    choice = null
+                }
             }
             // also re-run while docked: the keyboard can change height (emoji panel, rotation)
             imeHeight = kb
@@ -325,7 +363,7 @@ class OverlayService : Service() {
         } else if (docked) {
             docked = false
             imeHeight = 0
-            choice = null
+            hiddenSince = SystemClock.uptimeMillis()
             updateOptions()
             shapeCircle()
             morphIn()
@@ -483,12 +521,19 @@ class OverlayService : Service() {
         }
     }
 
-    /** After a sentence was typed: offer its unsure words, if there are any. */
-    private fun offerChoices(words: List<String>, typed: String, candidates: List<Candidate>) {
-        val spots = WordChoices.find(words, candidates)
-        if (spots.isEmpty() || !docked) { dismissChoice(); return }
+    /**
+     * After a sentence was typed: offer its unsure words, if there are any. [forced]: the
+     * phone's own sentence when the LLM's was typed instead; where they differ is always asked.
+     */
+    private fun offerChoices(words: List<String>, typed: String, candidates: List<Candidate>, forced: List<String>?) {
+        val spots = WordChoices.find(words, candidates, forced = forced)
+        Log.i(TAG, "choices: ${spots.size} spot(s)" + spots.joinToString("") { s ->
+            " [" + s.options.joinToString(" | ") { "${it.text} ${(it.probability * 100).toInt()}%" } + "]"
+        } + (if (forced != null) ", LLM differs" else "") + (if (docked) "" else ", keyboard closed"))
+        if (spots.isEmpty()) { dismissChoice(); return }
         val c = Choice(words, typed, spots)
         choice = c
+        if (!docked) hiddenSince = SystemClock.uptimeMillis()
         fillChips(c)
         if (optionsShown) revealChips() else updateOptions()
     }
@@ -496,6 +541,7 @@ class OverlayService : Service() {
     /** [i] 0 keeps what was typed; any other option rewrites the spot in the field. */
     private fun onChoose(i: Int) {
         val c = choice ?: return
+        lastTyped?.decided = true
         val spot = c.spot
         if (i > 0) {
             val a = spot.start + c.shift
@@ -630,9 +676,15 @@ class OverlayService : Service() {
         when (state) {
             State.LOADING -> toast("Φορτώνει το μοντέλο...")
             State.ERROR -> toast(Recognizer.lastError ?: "Το μοντέλο δεν φορτώθηκε")
-            // speaking again keeps what was typed and closes any open choice
-            State.IDLE -> runCatching { choice = null; recorder.start(); setState(State.LISTENING) }
-                .onFailure { toast("Μικρόφωνο: $it"); updateOptions() }
+            // speaking again keeps what was typed and closes any open choice (and a late answer)
+            State.IDLE -> runCatching {
+                choice = null
+                dictation++
+                setLlmPending(false)
+                recorder.start()
+                LlmCorrector.warmUp(this)
+                setState(State.LISTENING)
+            }.onFailure { toast("Μικρόφωνο: $it"); updateOptions() }
             State.LISTENING -> transcribe(recorder.stop(), "mic")
             State.THINKING -> {}
         }
@@ -647,6 +699,8 @@ class OverlayService : Service() {
 
     private fun transcribe(wav: FloatArray, id: String) {
         choice = null
+        val n = ++dictation
+        setLlmPending(false)
         if (wav.size < AudioRecorder.SAMPLE_RATE / 5) { setState(State.IDLE); toast("Πολύ σύντομο"); return }
         setState(State.THINKING)
         Thread {
@@ -655,29 +709,67 @@ class OverlayService : Service() {
             val context = TypingAccessibilityService.contextBefore()
             val r = runCatching { Recognizer.recognize(wav, id, context) }
             // layer 3 only when switched on and online; on any failure its words are empty
-            val llm = r.getOrNull()
+            val asked = r.getOrNull()
                 ?.takeIf { it.text.isNotBlank() && LlmCorrector.shouldRun(this) }
-                ?.let { LlmCorrector.refine(it) }
-            main.post {
-                setState(State.IDLE)
-                r.onSuccess { res ->
-                    val words = llm?.words?.takeIf { it.isNotEmpty() }
-                        ?: res.candidates.firstOrNull()?.words
-                        ?: res.text.split(' ').filter { it.isNotBlank() }
-                    val text = words.joinToString(" ")
-                    val where = TypingAccessibilityService.deliver(this, text)
-                    when {
-                        text.isBlank() -> toast("Δεν αναγνωρίστηκε τίποτα")
-                        where == "clipboard" -> toast("Αντιγράφηκε: $text")
-                        // docked, the text is in the field right above and a toast would cover the choices
-                        !docked -> toast(text)
-                    }
-                    val via = llm?.let { " via ${it.provider.label} ${it.ms} ms" + (it.error?.let { e -> " (kept: $e)" } ?: "") } ?: ""
-                    Log.i(TAG, "[$id] $where: $text (${res.inferenceMs} ms$via)")
-                    if (where == "typed") offerChoices(words, text, res.candidates)
-                }.onFailure { toast("Σφάλμα: $it") }
+                ?.let { res -> runCatching { llmPool.submit(Callable { LlmCorrector.refine(res) }) }.getOrNull() }
+            // a quick answer is typed straight away; a slow one corrects the typed text later
+            val quick = asked?.let { runCatching { it.get(LLM_WAIT_MS, TimeUnit.MILLISECONDS) }.getOrNull() }
+            val late = if (quick == null) asked else null
+            main.post { typeResult(r, quick, id, n, waiting = late != null) }
+            if (late != null) {
+                val o = runCatching { late.get() }.getOrNull()
+                main.post { applyLate(o, n) }
             }
         }.start()
+    }
+
+    private fun typeResult(r: Result<Recognizer.Result>, llm: LlmCorrector.Outcome?, id: String, n: Int, waiting: Boolean) {
+        setState(State.IDLE)
+        r.onSuccess { res ->
+            val local = res.candidates.firstOrNull()?.words
+                ?: res.text.split(' ').filter { it.isNotBlank() }
+            val words = llm?.words?.takeIf { it.isNotEmpty() } ?: local
+            val text = words.joinToString(" ")
+            val where = TypingAccessibilityService.deliver(this, text)
+            when {
+                text.isBlank() -> toast("Δεν αναγνωρίστηκε τίποτα")
+                where == "clipboard" -> toast("Αντιγράφηκε: $text")
+                // docked, the text is in the field right above and a toast would cover the choices
+                !docked -> toast(text)
+            }
+            val via = when {
+                llm != null -> " via ${llm.provider.label} ${llm.ms} ms" + (llm.error?.let { " (kept: $it)" } ?: "")
+                waiting -> ", ${LlmCorrector.provider.label} slower than $LLM_WAIT_MS ms, waiting"
+                else -> ""
+            }
+            Log.i(TAG, "[$id] $where: $text (${res.inferenceMs} ms$via)")
+            if (where != "typed") return@onSuccess
+            lastTyped = Typed(n, res, words)
+            setLlmPending(waiting)
+            offerChoices(words, text, res.candidates, forced = local.takeIf { it != words })
+        }.onFailure { toast("Σφάλμα: $it") }
+    }
+
+    /** A slow LLM answer arrived: it replaces the typed sentence unless the person moved on. */
+    private fun applyLate(o: LlmCorrector.Outcome?, n: Int) {
+        if (n != dictation) { Log.i(TAG, "[late] dropped, a new dictation started"); return }
+        setLlmPending(false)
+        val t = lastTyped?.takeIf { it.id == n } ?: return
+        val words = o?.words.orEmpty()
+        val text = words.joinToString(" ")
+        val via = o?.let { "${it.provider.label} ${it.ms} ms" } ?: "LLM"
+        val skip = when {
+            words.isEmpty() -> "kept the phone's: ${o?.error ?: "no answer"}"
+            text == t.text -> "agrees with the phone"
+            t.decided -> "dropped, a choice was already tapped: $text"
+            else -> null
+        }
+        if (skip != null) { Log.i(TAG, "[late via $via] $skip"); return }
+        val where = TypingAccessibilityService.replace(this, t.text, text, copyIfMissing = false)
+        Log.i(TAG, "[late via $via] $where: ${t.text} -> $text")
+        if (where != "typed") return
+        lastTyped = Typed(n, t.res, words)
+        offerChoices(words, text, t.res.candidates, forced = t.words)
     }
 
     private fun toast(msg: String) = Toast.makeText(this, msg, Toast.LENGTH_LONG).show()
@@ -713,6 +805,10 @@ class OverlayService : Service() {
         private const val NOTIF_ID = 1001
         const val ACTION_STOP = "gr.greekvt.STOP"
         const val ACTION_RELOAD = "gr.greekvt.RELOAD"
+        /** How long the bubble waits for the LLM before typing the phone's sentence. */
+        private const val LLM_WAIT_MS = 2_500L
+        /** A keyboard gone for less than this (restarting after the text changed) keeps the choice. */
+        private const val CHOICE_GRACE_MS = 1_500L
         @Volatile var running = false
     }
 }

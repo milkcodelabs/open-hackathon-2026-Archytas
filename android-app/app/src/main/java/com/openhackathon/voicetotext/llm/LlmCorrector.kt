@@ -3,6 +3,7 @@ package com.openhackathon.voicetotext.llm
 import android.content.Context
 import android.net.ConnectivityManager
 import android.net.NetworkCapabilities
+import android.os.SystemClock
 import android.util.Log
 import com.openhackathon.voicetotext.BuildConfig
 import com.openhackathon.voicetotext.asr.Recognizer
@@ -35,8 +36,12 @@ object LlmCorrector {
     private const val KEY_ON = "use_llm"
     private const val KEY_PROVIDER = "llm_provider"
 
-    private const val CONNECT_TIMEOUT_MS = 2_500
-    private const val READ_TIMEOUT_MS = 4_500
+    // Generous: the bubble no longer waits this long, it types the phone's result and lets a
+    // slow answer correct it afterwards.
+    private const val CONNECT_TIMEOUT_MS = 5_000
+    private const val READ_TIMEOUT_MS = 12_000
+    /** How often the connection is re-opened ahead of a request; idle ones live ~5 min. */
+    private const val WARM_EVERY_MS = 60_000L
 
     enum class Provider(
         val label: String,
@@ -110,6 +115,33 @@ object LlmCorrector {
 
     fun shouldRun(ctx: Context): Boolean = enabled && hasKey(provider) && online(ctx)
 
+    @Volatile private var warmedAt = 0L
+
+    /**
+     * Opens the TLS connection while the person is still speaking, so the real request reuses
+     * it instead of paying DNS and the handshake. A HEAD without the key: no quota is spent.
+     */
+    fun warmUp(ctx: Context) {
+        if (!shouldRun(ctx)) return
+        val now = SystemClock.elapsedRealtime()
+        if (now - warmedAt < WARM_EVERY_MS) return
+        warmedAt = now
+        val p = provider
+        Thread {
+            runCatching {
+                val conn = (URL(p.url).openConnection() as HttpURLConnection).apply {
+                    requestMethod = "HEAD"
+                    connectTimeout = CONNECT_TIMEOUT_MS
+                    readTimeout = CONNECT_TIMEOUT_MS
+                }
+                val code = conn.responseCode
+                // closing the (empty) body without disconnect() returns the socket to the pool
+                (if (code < 400) conn.inputStream else conn.errorStream)?.close()
+                Log.i(TAG, "${p.label} warm-up: HTTP $code in ${SystemClock.elapsedRealtime() - now} ms")
+            }.onFailure { warmedAt = 0L; Log.w(TAG, "${p.label} warm-up failed: $it") }
+        }.start()
+    }
+
     /**
      * Blocking; call it off the main thread. The outcome's [Outcome.words] is the sentence to
      * type, in the recognizer's normalized words; empty means keep the phone's own result.
@@ -155,8 +187,14 @@ object LlmCorrector {
         return try {
             post(p, prompt, p.reasoning)
         } catch (e: HttpError) {
-            // a model that does not take this reasoning level rejects the whole request
-            if (e.code == 400 && p.reasoning != null) post(p, prompt, null) else throw e
+            // A model that does not take this reasoning level rejects the whole request. Step
+            // down to "low", not to nothing: without the field Gemini 3 thinks at full depth,
+            // which takes seconds.
+            val fallback = if (p.reasoning == "minimal") "low" else null
+            if (e.code == 400 && p.reasoning != null) {
+                Log.w(TAG, "${p.label} rejected reasoning_effort=${p.reasoning}, retrying with $fallback: ${e.message}")
+                post(p, prompt, fallback)
+            } else throw e
         }
     }
 
@@ -179,16 +217,19 @@ object LlmCorrector {
             setRequestProperty("Content-Type", "application/json; charset=utf-8")
             setRequestProperty("Authorization", "Bearer ${key(p)}")
         }
+        var drained = false
         try {
             conn.outputStream.use { it.write(body.toString().toByteArray(Charsets.UTF_8)) }
             val code = conn.responseCode
             val stream = if (code in 200..299) conn.inputStream else conn.errorStream
             val text = stream?.bufferedReader(Charsets.UTF_8)?.use { it.readText() }.orEmpty()
+            drained = true
             if (code !in 200..299) throw HttpError(code, errorMessage(text))
             return JSONObject(text).getJSONArray("choices").getJSONObject(0)
                 .getJSONObject("message").optString("content")
         } finally {
-            conn.disconnect()
+            // a fully read response goes back to the keep-alive pool; disconnect() would close it
+            if (!drained) conn.disconnect()
         }
     }
 
