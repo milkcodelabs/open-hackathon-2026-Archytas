@@ -1,5 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-
-    <style name="Theme.Voicetotext" parent="android:Theme.Material.Light.NoActionBar" />
+    <!-- Dark window background so the dark Compose screen does not flash white on start. -->
+    <style name="Theme.Voicetotext" parent="android:Theme.Material.NoActionBar">
+        <item name="android:windowBackground">@color/bg</item>
+    </style>
 </resources>

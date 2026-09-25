@@ -17,6 +17,8 @@ android {
         versionName = "1.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+        // ONNX Runtime ships native code; the target phones are arm64 (keeps the APK ~25 MB)
+        ndk { abiFilters += listOf("arm64-v8a") }
     }
 
     buildTypes {
@@ -44,6 +46,9 @@ dependencies {
     implementation(libs.androidx.compose.ui.tooling.preview)
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.lifecycle.runtime.ktx)
+    implementation(libs.kotlinx.coroutines.android)
+    // CPU-only ONNX Runtime: the acoustic model (Omnilingual CTC / wav2vec2 / Whisper)
+    implementation(libs.onnxruntime.android)
     testImplementation(libs.junit)
     androidTestImplementation(platform(libs.androidx.compose.bom))
     androidTestImplementation(libs.androidx.compose.ui.test.junit4)
