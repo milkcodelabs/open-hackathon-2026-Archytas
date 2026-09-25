@@ -7,4 +7,19 @@
     <color name="teal_700">#FF018786</color>
     <color name="black">#FF000000</color>
     <color name="white">#FFFFFFFF</color>
+
+    <!-- Calm, high-contrast palette. The target user has motor and speech difficulty:
+         states must be readable at a glance and touch targets must be large.
+         Used by the floating bubble (Views); the Compose screens use ui/theme/Color.kt. -->
+    <color name="brand">#4F6BED</color>
+    <color name="brand_dark">#3A52C4</color>
+    <color name="listening">#E5484D</color>
+    <color name="thinking">#F2820D</color>
+    <color name="ok">#2FA36B</color>
+    <color name="muted">#8A90A6</color>
+    <color name="bg">#0F1220</color>
+    <color name="surface">#191D2E</color>
+    <color name="surface_soft">#222741</color>
+    <color name="on_bg">#F2F4FF</color>
+    <color name="on_muted">#A8AEC6</color>
 </resources>

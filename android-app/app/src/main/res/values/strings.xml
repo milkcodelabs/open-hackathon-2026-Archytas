@@ -1,3 +1,8 @@
 <resources>
     <string name="app_name">Voice-to-text</string>
+    <string name="accessibility_label">Voice-to-text φωνητική πληκτρολόγηση</string>
+    <string name="accessibility_desc">Γράφει το αναγνωρισμένο κείμενο στο πεδίο κειμένου που έχει εστίαση, σε οποιαδήποτε εφαρμογή. Διαβάζει μόνο τις τελευταίες λέξεις πριν από τον κέρσορα αυτού του πεδίου, για τα συμφραζόμενα, και δεν αποθηκεύει τίποτα.</string>
+    <string name="notif_channel">Φωνητική πληκτρολόγηση</string>
+    <string name="notif_title">Το μικρόφωνο του Voice-to-text είναι ενεργό</string>
+    <string name="notif_text">Πάτησε το εικονίδιο για να μιλήσεις. Παρατεταμένο πάτημα: δοκιμή με test.wav.</string>
 </resources>

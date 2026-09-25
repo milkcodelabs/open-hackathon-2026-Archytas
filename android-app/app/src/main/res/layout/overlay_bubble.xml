@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The floating microphone. The frame is deliberately larger than the visible circle:
+     the target user has limited motor control, so the touch area is generous. -->
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="96dp"
+    android:layout_height="96dp"
+    android:clipChildren="false"
+    android:clipToPadding="false">
+
+    <View
+        android:id="@+id/pulse"
+        android:layout_width="68dp"
+        android:layout_height="68dp"
+        android:layout_gravity="center"
+        android:alpha="0"
+        android:background="@drawable/bubble_ring" />
+
+    <FrameLayout
+        android:id="@+id/circle"
+        android:layout_width="68dp"
+        android:layout_height="68dp"
+        android:layout_gravity="center"
+        android:elevation="10dp">
+
+        <ImageView
+            android:id="@+id/icon"
+            android:layout_width="30dp"
+            android:layout_height="30dp"
+            android:layout_gravity="center"
+            android:contentDescription="μικρόφωνο"
+            android:src="@drawable/ic_mic" />
+
+        <ProgressBar
+            android:id="@+id/spinner"
+            android:layout_width="46dp"
+            android:layout_height="46dp"
+            android:layout_gravity="center"
+            android:indeterminateTint="#FFFFFF"
+            android:visibility="gone" />
+    </FrameLayout>
+</FrameLayout>

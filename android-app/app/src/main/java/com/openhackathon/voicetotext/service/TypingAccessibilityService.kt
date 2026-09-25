@@ -1,0 +1,150 @@
+package com.openhackathon.voicetotext.service
+
+import android.accessibilityservice.AccessibilityService
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.Context
+import android.os.Bundle
+import android.util.Log
+import android.view.accessibility.AccessibilityEvent
+import android.view.accessibility.AccessibilityNodeInfo
+
+/**
+ * Writes recognized text into whichever text field the person was last typing in.
+ *
+ * Finding that field at the moment of insertion is not enough: by then the user has tapped
+ * the floating bubble, and on many keyboards and apps the field is no longer reported as
+ * holding input focus. So the service also remembers the last editable node it saw focused
+ * and falls back to it, then to a clipboard paste, then to the clipboard alone.
+ *
+ * It looks at nothing else and stores nothing but that one node reference. The text already
+ * in that field (at most the last 200 characters before the cursor) is read at the moment of
+ * recognition so the language model can continue the sentence; it is not stored or logged.
+ */
+class TypingAccessibilityService : AccessibilityService() {
+
+    @Volatile private var lastEditable: AccessibilityNodeInfo? = null
+
+    override fun onServiceConnected() {
+        instance = this
+        Log.i(TAG, "connected")
+    }
+
+    override fun onAccessibilityEvent(event: AccessibilityEvent?) {
+        val e = event ?: return
+        when (e.eventType) {
+            AccessibilityEvent.TYPE_VIEW_FOCUSED,
+            AccessibilityEvent.TYPE_VIEW_CLICKED,
+            AccessibilityEvent.TYPE_VIEW_TEXT_SELECTION_CHANGED -> {
+                val src = e.source
+                if (src == null) {
+                    Log.i(TAG, "event ${e.eventType} from ${e.packageName} carried no source")
+                    return
+                }
+                if (src.isEditable) {
+                    lastEditable = src
+                    Log.i(TAG, "remembered a field in ${src.packageName} (${src.viewIdResourceName})")
+                } else {
+                    Log.i(TAG, "event ${e.eventType} from ${e.packageName}: ${src.className}, not editable")
+                }
+            }
+        }
+    }
+
+    override fun onInterrupt() {}
+
+    override fun onDestroy() {
+        if (instance === this) instance = null
+        lastEditable = null
+        super.onDestroy()
+    }
+
+    /** The field holding input focus right now, in any window that is not ours. */
+    private fun focusedEditable(): AccessibilityNodeInfo? {
+        rootInActiveWindow?.findFocus(AccessibilityNodeInfo.FOCUS_INPUT)?.let {
+            if (it.isEditable) return it
+        }
+        for (w in windows) {
+            val n = w.root?.findFocus(AccessibilityNodeInfo.FOCUS_INPUT) ?: continue
+            if (n.isEditable) return n
+        }
+        return null
+    }
+
+    /** The remembered field, re-read so a stale reference is not used. */
+    private fun rememberedEditable(): AccessibilityNodeInfo? {
+        val n = lastEditable ?: return null
+        return if (runCatching { n.refresh() }.getOrDefault(false) && n.isEditable) n else null
+    }
+
+    private fun append(node: AccessibilityNodeInfo, text: String): Boolean {
+        val existing = if (node.isShowingHintText) "" else (node.text?.toString() ?: "")
+        val sep = if (existing.isEmpty() || existing.endsWith(" ")) "" else " "
+        val combined = existing + sep + text
+        val args = Bundle().apply {
+            putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, combined)
+        }
+        if (!node.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, args)) return false
+        val sel = Bundle().apply {
+            putInt(AccessibilityNodeInfo.ACTION_ARGUMENT_SELECTION_START_INT, combined.length)
+            putInt(AccessibilityNodeInfo.ACTION_ARGUMENT_SELECTION_END_INT, combined.length)
+        }
+        node.performAction(AccessibilityNodeInfo.ACTION_SET_SELECTION, sel)
+        return true
+    }
+
+    /** Some fields refuse SET_TEXT but accept a paste of the clipboard. */
+    private fun paste(node: AccessibilityNodeInfo, text: String): Boolean {
+        val cm = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+        cm.setPrimaryClip(ClipData.newPlainText("greek_vt", text))
+        node.performAction(AccessibilityNodeInfo.ACTION_FOCUS)
+        return node.performAction(AccessibilityNodeInfo.ACTION_PASTE)
+    }
+
+    /** Text before the cursor of the field the result will go to; null if none or a hint. */
+    private fun textBeforeCursor(): String? {
+        val node = focusedEditable() ?: rememberedEditable() ?: return null
+        if (node.isShowingHintText || node.isPassword) return null
+        val text = node.text?.toString() ?: return null
+        val cursor = node.textSelectionStart.takeIf { it in 0..text.length } ?: text.length
+        return text.substring(0, cursor).takeLast(CONTEXT_CHARS)
+    }
+
+    private fun insert(text: String): String? {
+        focusedEditable()?.let {
+            if (append(it, text)) return "focused"
+            if (paste(it, text)) return "focused/paste"
+        }
+        rememberedEditable()?.let {
+            if (append(it, text)) return "remembered"
+            if (paste(it, text)) return "remembered/paste"
+        }
+        return null
+    }
+
+    companion object {
+        private const val TAG = "TypingA11y"
+        @Volatile var instance: TypingAccessibilityService? = null
+
+        val enabled: Boolean get() = instance != null
+
+        /** Enough characters for the last words of the sentence; nothing more is read. */
+        private const val CONTEXT_CHARS = 200
+
+        /**
+         * The text already written before the cursor in the field being typed into, for the
+         * language model's context. Stays on the phone; never stored or logged.
+         */
+        fun contextBefore(): String? = runCatching { instance?.textBeforeCursor() }.getOrNull()
+
+        /** Types the text where the person was writing; copies it if there is nowhere to type. */
+        fun deliver(ctx: Context, text: String): String {
+            if (text.isBlank()) return "empty"
+            instance?.insert(text)?.let { Log.i(TAG, "inserted via $it"); return "typed" }
+            val cm = ctx.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+            cm.setPrimaryClip(ClipData.newPlainText("greek_vt", text))
+            Log.i(TAG, "no editable field, copied to the clipboard")
+            return "clipboard"
+        }
+    }
+}
