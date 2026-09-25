@@ -60,6 +60,7 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -67,6 +68,7 @@ import androidx.compose.ui.unit.sp
 import com.openhackathon.voicetotext.R
 import com.openhackathon.voicetotext.asr.Recognizer
 import com.openhackathon.voicetotext.decoding.Candidate
+import com.openhackathon.voicetotext.decoding.Candidates
 import com.openhackathon.voicetotext.models.ModelDownloader
 import com.openhackathon.voicetotext.ui.theme.Bg
 import com.openhackathon.voicetotext.ui.theme.Brand
@@ -141,6 +143,7 @@ fun MainScreen(state: ScreenState, actions: MainActions) {
         PermissionsCard(state, actions)
         SpeakerCard(state)
         CheckCard(state, actions)
+        AnalysisCard()
         Spacer(Modifier.height(24.dp))
     }
 }
@@ -527,6 +530,98 @@ private fun CheckCard(state: ScreenState, actions: MainActions) {
     }
 }
 
+// ---------------------------------------------------------------------- analysis
+
+/**
+ * How the last recognition (panel or bubble) went from sound to text: what layer 1 heard,
+ * what each later layer changed (changed words highlighted), how long each step took, and
+ * the final sentence.
+ */
+@Composable
+private fun AnalysisCard() {
+    val last by Recognizer.lastResult.collectAsState()
+    val res = last ?: return
+    if (res.stages.isEmpty()) return
+    val em = res.emissions
+    Section("Ανάλυση της τελευταίας αναγνώρισης") {
+        Text(
+            String.format(Locale.US, "ήχος %.2f s  ·  %d καρέ των 20 ms  ·  κενά %.0f%%  ·  σύνολο %d ms (RTF %.2f)",
+                res.audioSeconds, em.numFrames, em.blankFraction() * 100, res.inferenceMs, res.rtf),
+            fontSize = 14.sp, color = OnMuted,
+        )
+        Spacer(Modifier.height(14.dp))
+        var previous: List<String>? = null
+        res.stages.forEachIndexed { i, st ->
+            val words = st.text.split(' ').filter { it.isNotBlank() }
+            StageBlock(st, words, previous)
+            if (i == 0) {
+                val conf = em.greedyWords()
+                if (conf.isNotEmpty()) {
+                    Text(
+                        "βεβαιότητα ανά λέξη: " + conf.joinToString("  ") {
+                            String.format(Locale.US, "%s %.2f", it.text, it.confidence)
+                        },
+                        fontSize = 13.sp, color = OnMuted, modifier = Modifier.padding(top = 4.dp),
+                    )
+                }
+            }
+            Text("↓", fontSize = 20.sp, color = OnMuted,
+                modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp), textAlign = TextAlign.Center)
+            previous = words
+        }
+        Column(
+            Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(14.dp))
+                .background(Ok.copy(alpha = 0.16f))
+                .padding(14.dp),
+        ) {
+            Text("ΤΕΛΙΚΟ", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = Ok, letterSpacing = 1.sp)
+            Text(res.text.ifBlank { "(τίποτα)" }, fontSize = 20.sp, fontWeight = FontWeight.SemiBold, color = OnBg,
+                modifier = Modifier.padding(top = 4.dp))
+        }
+    }
+}
+
+@Composable
+private fun StageBlock(st: Recognizer.Stage, words: List<String>, previous: List<String>?) {
+    val changed = if (previous == null) emptySet() else Candidates.differing(words, previous)
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(14.dp))
+            .background(SurfaceSoft)
+            .padding(14.dp),
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(st.layer, fontSize = 13.sp, fontWeight = FontWeight.Bold, color = OnBg,
+                modifier = Modifier.clip(RoundedCornerShape(8.dp)).background(Brand).padding(horizontal = 8.dp, vertical = 3.dp))
+            Spacer(Modifier.width(10.dp))
+            Text("${st.ms} ms", fontSize = 13.sp, color = OnMuted)
+        }
+        Text(st.what, fontSize = 13.sp, color = OnMuted, modifier = Modifier.padding(top = 6.dp))
+        Text(
+            buildAnnotatedString {
+                if (words.isEmpty()) append("(τίποτα)")
+                words.forEachIndexed { i, w ->
+                    if (i > 0) append(" ")
+                    if (i in changed) withStyle(SpanStyle(color = Thinking, fontWeight = FontWeight.Bold)) { append(w) }
+                    else append(w)
+                }
+            },
+            fontSize = 18.sp, color = OnBg, modifier = Modifier.padding(top = 6.dp),
+        )
+        if (previous != null) {
+            Text(
+                if (changed.isEmpty() && words.size == previous.size) "χωρίς αλλαγή"
+                else "άλλαξαν ${changed.size} λέξεις",
+                fontSize = 12.sp, color = if (changed.isEmpty()) OnMuted else Thinking,
+                modifier = Modifier.padding(top = 4.dp),
+            )
+        }
+    }
+}
+
 // ---------------------------------------------------------------------- building blocks
 
 @Composable
@@ -537,7 +632,7 @@ private fun Section(title: String, content: @Composable () -> Unit) {
         modifier = Modifier.fillMaxWidth(),
     ) {
         Column(Modifier.padding(20.dp)) {
-            Text(title.uppercase(), fontSize = 13.sp, fontWeight = FontWeight.Bold, color = OnMuted,
+            Text(greekCaps(title), fontSize = 13.sp, fontWeight = FontWeight.Bold, color = OnMuted,
                 letterSpacing = 1.sp)
             Spacer(Modifier.height(12.dp))
             content()
@@ -560,3 +655,9 @@ private fun StatusRow(ok: Boolean, text: String) {
     }
 }
 
+
+/** Greek capitals carry no stress marks: "Ανάλυση" -> "ΑΝΑΛΥΣΗ", not "ΑΝΆΛΥΣΗ". */
+private fun greekCaps(text: String): String =
+    java.text.Normalizer.normalize(text.uppercase(Locale.ROOT), java.text.Normalizer.Form.NFD)
+        .filter { it != '\u0301' }
+        .let { java.text.Normalizer.normalize(it, java.text.Normalizer.Form.NFC) }

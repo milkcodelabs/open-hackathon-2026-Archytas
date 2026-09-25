@@ -32,7 +32,6 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
-import java.util.Locale
 
 /**
  * Setup screen. The interface people actually use is the floating bubble
@@ -272,22 +271,12 @@ class MainActivity : ComponentActivity() {
     /**
      * One place that renders a result, used by both the microphone and the fixture check.
      * The sentences themselves are shown by the candidates list, which follows
-     * [Recognizer.lastResult]; here only a note if nothing was heard, and the timings.
+     * [Recognizer.lastResult], the stages by the analysis card; here only a note if nothing
+     * was heard.
      */
     private fun show(res: Recognizer.Result) {
         result = if (res.text.isBlank()) "(δεν αναγνωρίστηκε τίποτα)" else ""
-        detail = buildString {
-            appendLine(String.format(Locale.US, "μοντέλο    %s", Recognizer.label(this@MainActivity)))
-            appendLine(String.format(Locale.US, "ήχος       %.2f s", res.audioSeconds))
-            appendLine(String.format(Locale.US, "χρόνος     %d ms   RTF %.2f", res.inferenceMs, res.rtf))
-            if (res.usedLanguageModel) {
-                appendLine(String.format(Locale.US, "  εκ των οποίων beam+LM  %d ms", res.beamMs))
-                if (res.neuralMs > 0) appendLine(String.format(Locale.US, "  εκ των οποίων νευρωνικό %d ms", res.neuralMs))
-            }
-            val em = res.emissions
-            appendLine(String.format(Locale.US, "εκπομπές   %d x %d", em.numFrames, em.vocabSize))
-            appendLine(String.format(Locale.US, "κενά       %.1f%%", em.blankFraction() * 100))
-        }
+        detail = ""       // the analysis card at the bottom shows every stage and its timing
     }
 
     // ------------------------------------------------------------------ on-device check

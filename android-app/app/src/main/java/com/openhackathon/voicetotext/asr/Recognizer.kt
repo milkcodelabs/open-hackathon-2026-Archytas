@@ -270,9 +270,14 @@ object Recognizer {
         val neuralMs: Long = 0,
         /** The best sentences, best first; [text] is the first. One entry without the LM. */
         val candidates: List<Candidate> = emptyList(),
+        /** What each layer produced, in order, for the analysis on the screen. */
+        val stages: List<Stage> = emptyList(),
     ) {
         val rtf: Float get() = inferenceMs / 1000f / audioSeconds
     }
+
+    /** One step of the pipeline: its best sentence and the time it took. */
+    class Stage(val layer: String, val what: String, val text: String, val ms: Long)
 
     /**
      * [context]: the text already in the field the result will be typed into (text before
@@ -283,14 +288,29 @@ object Recognizer {
         val m = ctc ?: throw IllegalStateException("το μοντέλο δεν φορτώθηκε")
         val (em, acousticMs) = m.emit(waveform, audioId)
         val b = beam
+        val layer1 = Stage(
+            "Layer 1", "${label(null)}: το πιο πιθανό γράμμα κάθε 20 ms, χωρίς γλωσσικό μοντέλο",
+            em.greedyDecode(), acousticMs,
+        )
         val result = if (b == null) {
             val text = em.greedyDecode()
-            Result(text, acousticMs, seconds, engine, em, false, 0, 0, Candidates.single(text))
+            Result(text, acousticMs, seconds, engine, em, false, 0, 0, Candidates.single(text), listOf(layer1))
         } else {
+            val stages = arrayListOf(layer1)
             val t0 = System.nanoTime()
             val history = contextWords(context, m.labels)
             var hyps = b.decode(em, N_BEST, history)
-            speller?.let { hyps = it.rescore(hyps, history) }
+            val beamOnlyMs = (System.nanoTime() - t0) / 1_000_000
+            stages.add(Stage("Layer 2α", "αναζήτηση + ελληνικό 3-gram" +
+                (if (history.isEmpty()) "" else ", συνέχεια του «${history.joinToString(" ")}»") +
+                (if (personalWords.isEmpty()) "" else ", ${personalWords.size} δικές σου λέξεις"),
+                hyps.firstOrNull()?.text ?: "", beamOnlyMs))
+            speller?.let { sp ->
+                val ts = System.nanoTime()
+                hyps = sp.rescore(hyps, history)
+                stages.add(Stage("Layer 2β", "ορθογραφία: ομόηχες γραφές (ι/η/υ/ει/οι, ο/ω, ε/αι), διαλέγει το γλωσσικό μοντέλο",
+                    hyps.firstOrNull()?.text ?: "", (System.nanoTime() - ts) / 1_000_000))
+            }
             var neuralMs = 0L
             val nr = neural
             if (nr != null && hyps.size > 1) {
@@ -301,12 +321,14 @@ object Recognizer {
                     .onFailure { Log.e(TAG, "neural rescoring failed, keeping layer 2b's order", it) }
                     .getOrDefault(hyps)
                 neuralMs = (System.nanoTime() - tn) / 1_000_000
+                stages.add(Stage("Layer 2γ", "νευρωνικό GPT-2: ξαναδιαλέγει ανάμεσα στις ${nr.topK} καλύτερες με βάση όλη τη φράση",
+                    hyps.firstOrNull()?.text ?: "", neuralMs))
             }
             val candidates = Candidates.from(hyps, MAX_CANDIDATES)
             val text = candidates.firstOrNull()?.text ?: em.greedyDecode()
             val beamMs = (System.nanoTime() - t0) / 1_000_000
             Result(text, acousticMs + beamMs, seconds, engine, em, true, beamMs, neuralMs,
-                candidates.ifEmpty { Candidates.single(text) })
+                candidates.ifEmpty { Candidates.single(text) }, stages)
         }
         _last.value = result
         return result
@@ -314,7 +336,7 @@ object Recognizer {
 
     /** The engine's name for the screen. */
     @Suppress("UNUSED_PARAMETER")
-    fun label(ctx: Context): String = when (engine) {
+    fun label(ctx: Context?): String = when (engine) {
         Engine.OMNI -> "Omnilingual"
         Engine.CTC -> "wav2vec2"
     }
