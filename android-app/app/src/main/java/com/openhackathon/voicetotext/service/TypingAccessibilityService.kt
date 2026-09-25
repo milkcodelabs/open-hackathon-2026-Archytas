@@ -125,6 +125,49 @@ class TypingAccessibilityService : AccessibilityService() {
         return null
     }
 
+    /**
+     * Like [replace], but only touches the words of [oldWords] that actually differ from
+     * [newWords] (found by trimming their common prefix and suffix): the field's whole text is
+     * still what SET_TEXT carries (Android has no narrower edit action), but the characters
+     * that are recomputed and spliced in are just that inner span, not the full old sentence -
+     * so a one-word correction cannot, for instance, clash with an edit made anywhere else in
+     * the words around it between the phrase being typed and the correction arriving.
+     */
+    private fun replaceDiff(oldWords: List<String>, newWords: List<String>): String? {
+        var prefix = 0
+        while (prefix < oldWords.size && prefix < newWords.size && oldWords[prefix] == newWords[prefix]) prefix++
+        var suffix = 0
+        while (suffix < oldWords.size - prefix && suffix < newWords.size - prefix &&
+            oldWords[oldWords.size - 1 - suffix] == newWords[newWords.size - 1 - suffix]
+        ) suffix++
+        // nothing actually differs
+        if (prefix + suffix >= oldWords.size && prefix + suffix >= newWords.size) return null
+
+        val oldFull = oldWords.joinToString(" ")
+        val newChanged = newWords.subList(prefix, newWords.size - suffix).joinToString(" ")
+        val prefixChars = oldWords.subList(0, prefix).joinToString(" ").length
+        val suffixChars = oldWords.subList(oldWords.size - suffix, oldWords.size).joinToString(" ").length
+        // the changed span's character bounds inside oldFull, spaces to its neighbours included
+        val start = if (prefix == 0) 0 else prefixChars + 1
+        val end = oldFull.length - if (suffix == 0) 0 else suffixChars + 1
+
+        for ((where, node) in listOf("focused" to focusedEditable(), "remembered" to rememberedEditable())) {
+            if (node == null || node.isShowingHintText) continue
+            val text = node.text?.toString() ?: continue
+            val at = text.lastIndexOf(oldFull)
+            if (at < 0) continue
+            val combined = text.substring(0, at + start) + newChanged + text.substring(at + end)
+            val cursor = node.textSelectionStart.takeIf { it in 0..text.length } ?: text.length
+            val moved = when {
+                cursor >= at + end -> cursor + combined.length - text.length
+                cursor > at + start -> at + start + newChanged.length
+                else -> cursor
+            }
+            if (setText(node, combined, moved)) return where
+        }
+        return null
+    }
+
     /** Some fields refuse SET_TEXT but accept a paste of the clipboard. */
     private fun paste(node: AccessibilityNodeInfo, text: String): Boolean {
         val cm = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
@@ -233,6 +276,30 @@ class TypingAccessibilityService : AccessibilityService() {
             val cm = ctx.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
             cm.setPrimaryClip(ClipData.newPlainText("greek_vt", new))
             Log.i(TAG, "typed text not found, copied the correction to the clipboard")
+            return "clipboard"
+        }
+
+        /**
+         * Like [replace], but for a correction expressed as [oldWords] -> [newWords]: only the
+         * words that actually differ (the recognizer's own diff) are rewritten in the field,
+         * every matching word around them left exactly as it is.
+         */
+        fun replaceWords(ctx: Context, oldWords: List<String>, newWords: List<String>, copyIfMissing: Boolean = true): String {
+            if (oldWords.isEmpty()) return deliver(ctx, newWords.joinToString(" "))
+            if (oldWords == newWords) return "typed"
+            runCatching { instance?.replaceDiff(oldWords, newWords) }.getOrNull()?.let {
+                instance?.rememberReplaced(oldWords.joinToString(" "), newWords.joinToString(" "))
+                Log.i(TAG, "diff-replaced via $it")
+                return "typed"
+            }
+            if (!copyIfMissing) {
+                Log.i(TAG, "typed words not found (edited or left the field), correction dropped")
+                return "missing"
+            }
+            val text = newWords.joinToString(" ")
+            val cm = ctx.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+            cm.setPrimaryClip(ClipData.newPlainText("greek_vt", text))
+            Log.i(TAG, "typed words not found, copied the correction to the clipboard")
             return "clipboard"
         }
     }

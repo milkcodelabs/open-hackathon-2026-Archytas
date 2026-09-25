@@ -16,6 +16,7 @@ import android.app.Service
 import android.content.Context
 import android.content.Intent
 import android.content.pm.ServiceInfo
+import android.content.res.ColorStateList
 import android.graphics.Color
 import android.graphics.PixelFormat
 import android.graphics.Typeface
@@ -45,6 +46,7 @@ import android.widget.TextView
 import android.widget.Toast
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
+import androidx.core.widget.ImageViewCompat
 import java.util.concurrent.Callable
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
@@ -67,9 +69,13 @@ import kotlin.math.abs
  * With the LLM switch on and a network, the sentence is first checked by [LlmCorrector]; if
  * it is slow, the phone's sentence is typed at once (a ring spins around the mic) and the
  * answer replaces it when it comes, with the phone's words offered back as the alternative.
- * When the best sentence is less likely than [CONFIDENCE_THRESHOLD], nothing is typed: the
- * overlay grows to show the best few sentences (beside the circle, or above the bar) and the
- * tapped one is typed, after which the window shrinks back to exactly where it was.
+ * Docked, the top guess is always typed straight away, then refined in place: a late LLM
+ * answer or a tapped word choice rewrites only the words that actually changed, not the whole
+ * sentence. Floating, nothing is typed until the person picks one: below [CONFIDENCE_THRESHOLD]
+ * the bubble instead grows a header showing the top guess in full and a few alternatives under
+ * it, and the tapped one is typed, after which the window shrinks back to exactly where it was.
+ * The docked bar is a flat blue rectangle with white icons; the mic turns red while it records
+ * and, with Undo, orange on an error, so the two big corner targets still read at a glance.
  */
 class OverlayService : Service() {
 
@@ -90,9 +96,12 @@ class OverlayService : Service() {
     private lateinit var strip: HorizontalScrollView
     private lateinit var chips: LinearLayout
     private lateinit var suggestionBox: LinearLayout
+    private lateinit var suggestionHeader: TextView
     private lateinit var dockTrack: View
     private lateinit var undoButton: FrameLayout
+    private lateinit var undoIcon: ImageView
     private lateinit var undoSatellite: FrameLayout
+    private lateinit var undoSatelliteIcon: ImageView
     private lateinit var params: WindowManager.LayoutParams
 
     private val bg = GradientDrawable().apply { shape = GradientDrawable.RECTANGLE }
@@ -105,9 +114,15 @@ class OverlayService : Service() {
         shape = GradientDrawable.RECTANGLE
         setColor(0xF21C2033.toInt())
     }
+    /** The docked bar's flat backdrop, and the mic/Undo buttons riding on it: always this blue,
+     *  whatever the mic's state - only the icons change colour when something needs attention. */
     private val trackBg = GradientDrawable().apply {
         shape = GradientDrawable.RECTANGLE
-        setColor(0x661C2033)
+        setColor(DOCK_BLUE)
+    }
+    private val dockButtonBg = GradientDrawable().apply {
+        shape = GradientDrawable.OVAL
+        setColor(DOCK_BLUE)
     }
     private val ease = PathInterpolator(0.2f, 0f, 0f, 1f)
     private val recorder = AudioRecorder()
@@ -220,21 +235,25 @@ class OverlayService : Service() {
         pulse = root.findViewById(R.id.pulse)
         spinner = root.findViewById(R.id.spinner)
         suggestionBox = root.findViewById(R.id.suggestions)
+        suggestionHeader = root.findViewById(R.id.suggestion_header)
         circle.background = bg
         pulse.background = ring
         panelBg.cornerRadius = dp(20).toFloat()
         suggestionBox.background = panelBg
         dockTrack = root.findViewById(R.id.dock_track)
         undoButton = root.findViewById(R.id.undo_button)
+        undoIcon = root.findViewById(R.id.undo_icon)
         undoSatellite = root.findViewById(R.id.undo_satellite)
+        undoSatelliteIcon = root.findViewById(R.id.undo_satellite_icon)
         trackBg.cornerRadius = barHeight() / 2f
         dockTrack.background = trackBg
-        undoButton.background = secondaryBg()
+        undoButton.background = dockButtonBg
+        // the floating satellite is its own dark puck, unaffected by the docked bar's styling
         undoSatellite.background = secondaryBg()
         pressFeedback(undoButton)
         pressFeedback(undoSatellite)
-        undoButton.setOnClickListener { onUndo() }
-        undoSatellite.setOnClickListener { onUndo() }
+        undoButton.setOnClickListener { onUndo(undoIcon) }
+        undoSatellite.setOnClickListener { onUndo(undoSatelliteIcon) }
         applyColor(State.LOADING.color)
         buildStrip()
 
@@ -289,8 +308,27 @@ class OverlayService : Service() {
 
     private fun applyColor(c: Int) {
         currentColor = c
-        bg.setColor(c)
+        // docked, the rectangle stays flat blue regardless of state; only the icons speak up
+        bg.setColor(if (docked) DOCK_BLUE else c)
         ring.setColor(c and 0x00FFFFFF or 0x55000000)
+        updateIconTints()
+    }
+
+    private fun tint(v: ImageView, c: Int) = ImageViewCompat.setImageTintList(v, ColorStateList.valueOf(c))
+
+    /** Floating: the icons are always white, the coloured background already says everything.
+     *  Docked: the bar is always blue, so the mic icon turns red while recording and orange on
+     *  an error, and Undo turns orange on an error too, otherwise both stay white. */
+    private fun updateIconTints() {
+        val micColor = if (!docked) ICON_WHITE else when (state) {
+            State.LISTENING -> ICON_RED
+            State.ERROR -> ICON_ORANGE
+            else -> ICON_WHITE
+        }
+        tint(icon, micColor)
+        val undoColor = if (docked && state == State.ERROR) ICON_ORANGE else ICON_WHITE
+        tint(undoIcon, undoColor)
+        tint(undoSatelliteIcon, undoColor)
     }
 
     private fun setState(s: State) {
@@ -427,6 +465,7 @@ class OverlayService : Service() {
                 bubbleY = rest?.get(1) ?: params.y
                 circleRest = null
                 docked = true
+                applyColor(currentColor) // the rectangle turns flat blue, the icons follow suit
                 // Setting the field's text restarts the keyboard, which can read as closed for
                 // a poll or two: only a choice hidden for longer than that is stale.
                 if (choice != null && SystemClock.uptimeMillis() - hiddenSince > CHOICE_GRACE_MS) {
@@ -436,16 +475,17 @@ class OverlayService : Service() {
             }
             // also re-run while docked: the keyboard can change height (emoji panel, rotation)
             imeHeight = kb
-            if (suggestions.isNotEmpty()) expandDocked() else shapeBar()
+            if (suggestions.isNotEmpty()) { updateSuggestionHeader(); expandDocked() } else shapeBar()
             if (!wasDocked) { morphIn(); updateOptions() }
         } else if (docked) {
             docked = false
             imeHeight = 0
             panelExtra = 0
             hiddenSince = SystemClock.uptimeMillis()
+            applyColor(currentColor) // back to the state colour, no more flat blue
             updateOptions()
             shapeCircle()
-            if (suggestions.isNotEmpty()) expandCircle()
+            if (suggestions.isNotEmpty()) { updateSuggestionHeader(); expandCircle() }
             morphIn()
         }
     }
@@ -668,7 +708,8 @@ class OverlayService : Service() {
             val picked = spot.options[i].words
             val words = c.words.subList(0, a) + picked + c.words.subList(b, c.words.size)
             val text = words.joinToString(" ")
-            val where = TypingAccessibilityService.replace(this, c.typed, text)
+            // only the tapped word(s) are rewritten in the field, not the whole sentence
+            val where = TypingAccessibilityService.replaceWords(this, c.words, words)
             if (where == "clipboard") toast("Αντιγράφηκε: $text")
             Log.i(TAG, "[choice] $where: ${c.typed} -> $text")
             c.shift += picked.size - (spot.end - spot.start)
@@ -767,6 +808,8 @@ class OverlayService : Service() {
         suggestions.forEachIndexed { i, c ->
             suggestionBox.addView(makeSuggestion(c, best = i == 0) { onSuggestion(c, n) })
         }
+        // the header goes first, so it must be sized in before the panel is measured below
+        updateSuggestionHeader()
         suggestionBox.visibility = View.VISIBLE
         if (docked) expandDocked() else expandCircle()
 
@@ -784,6 +827,20 @@ class OverlayService : Service() {
             View.MeasureSpec.makeMeasureSpec(maxH, View.MeasureSpec.AT_MOST),
         )
         return suggestionBox.measuredWidth to suggestionBox.measuredHeight.coerceAtMost(maxH)
+    }
+
+    /**
+     * Floating, since nothing was typed for the person to read: the header carries the full top
+     * guess above the chips. Docked, the top guess is already in the field, so it stays hidden.
+     */
+    private fun updateSuggestionHeader() {
+        val top = suggestions.firstOrNull()
+        if (!docked && top != null) {
+            suggestionHeader.text = top.text
+            suggestionHeader.visibility = View.VISIBLE
+        } else {
+            suggestionHeader.visibility = View.GONE
+        }
     }
 
     private fun placePanel(w: Int, h: Int, left: Int, top: Int) {
@@ -872,7 +929,9 @@ class OverlayService : Service() {
         suggestionBox.animate().cancel()
         suggestionBox.alpha = 1f
         suggestionBox.translationY = 0f
-        suggestionBox.removeAllViews()
+        // the header (child 0) stays put, ready for next time; only the chips are thrown away
+        for (i in suggestionBox.childCount - 1 downTo 1) suggestionBox.removeViewAt(i)
+        suggestionHeader.visibility = View.GONE
         suggestionBox.visibility = View.GONE
         if (docked) {
             panelExtra = 0
@@ -966,8 +1025,11 @@ class OverlayService : Service() {
     }
 
     /** Either Undo button: takes the last typed phrase back out of the field. */
-    private fun onUndo() {
+    private fun onUndo(tapped: ImageView) {
         hideSatellite(animate = false)
+        // a quick orange flash on the button that was actually tapped, then back to its state colour
+        tint(tapped, ICON_ORANGE)
+        main.postDelayed({ updateIconTints() }, UNDO_FLASH_MS)
         when (TypingAccessibilityService.undoLastInjection()) {
             "undone" -> {
                 // the open word choice and any late LLM answer were about the removed sentence
@@ -1105,8 +1167,10 @@ class OverlayService : Service() {
     private fun typeResult(r: Result<Recognizer.Result>, llm: LlmCorrector.Outcome?, id: String, n: Int, waiting: Boolean) {
         setState(State.IDLE)
         r.onSuccess { res ->
-            // a usable LLM answer is trusted as is; otherwise a doubtful sentence is asked, not typed
-            if (llm?.words.isNullOrEmpty() && isUnsure(res)) {
+            // docked, the top guess always goes straight into the field (it can be undone or
+            // corrected in place); only floating, with nowhere to show the sentence, does a
+            // doubtful one wait for the person to pick from the panel instead of being typed
+            if (llm?.words.isNullOrEmpty() && !docked && isUnsure(res)) {
                 Log.i(TAG, "[$id] unsure (${(res.candidates.first().probability * 100).toInt()}%), asking: " +
                     res.candidates.take(MAX_SUGGESTIONS).joinToString(" | ") { it.text } +
                     (if (waiting) ", late LLM answer will be ignored" else ""))
@@ -1153,7 +1217,8 @@ class OverlayService : Service() {
             else -> null
         }
         if (skip != null) { Log.i(TAG, "[late via $via] $skip"); return }
-        val where = TypingAccessibilityService.replace(this, t.text, text, copyIfMissing = false)
+        // only the words the LLM actually changed are rewritten, the rest of the sentence stays put
+        val where = TypingAccessibilityService.replaceWords(this, t.words, words, copyIfMissing = false)
         Log.i(TAG, "[late via $via] $where: ${t.text} -> $text")
         if (where != "typed") return
         lastTyped = Typed(n, t.res, words)
@@ -1202,6 +1267,13 @@ class OverlayService : Service() {
         private const val MAX_SUGGESTIONS = 3
         /** How long the floating Undo bubble stays out if it is not touched. */
         private const val SATELLITE_MS = 5_000L
+        /** The docked bar's fixed background: only its icons change colour, never this. */
+        private const val DOCK_BLUE = 0xFF3D5FE0.toInt()
+        private const val ICON_WHITE = Color.WHITE
+        private const val ICON_RED = 0xFFE5484D.toInt()
+        private const val ICON_ORANGE = 0xFFF2820D.toInt()
+        /** How long an Undo icon stays orange after a tap before it reverts to its state colour. */
+        private const val UNDO_FLASH_MS = 260L
         @Volatile var running = false
     }
 }

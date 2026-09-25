@@ -41,6 +41,7 @@
         android:visibility="gone">
 
         <ImageView
+            android:id="@+id/undo_satellite_icon"
             android:layout_width="22dp"
             android:layout_height="22dp"
             android:layout_gravity="center"
@@ -63,6 +64,7 @@
         android:visibility="gone">
 
         <ImageView
+            android:id="@+id/undo_icon"
             android:layout_width="26dp"
             android:layout_height="26dp"
             android:layout_gravity="center"
@@ -98,7 +100,8 @@
     </FrameLayout>
 
     <!-- Whole-sentence suggestions when the recognizer was unsure; sized and placed from code,
-         beside the circle or above the docked bar. -->
+         beside the circle (floating only: the docked bar types the top guess right away, so
+         it needs no header there). -->
     <LinearLayout
         android:id="@+id/suggestions"
         android:layout_width="wrap_content"
@@ -107,5 +110,23 @@
         android:elevation="10dp"
         android:orientation="vertical"
         android:padding="6dp"
-        android:visibility="gone" />
+        android:visibility="gone">
+
+        <!-- Floating only: the full top prediction, since nothing was typed to show it in a
+             field. Stays the first child; the chips are added below it in code. -->
+        <TextView
+            android:id="@+id/suggestion_header"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginBottom="6dp"
+            android:ellipsize="end"
+            android:fontFamily="sans-serif-medium"
+            android:maxLines="3"
+            android:paddingHorizontal="6dp"
+            android:paddingTop="2dp"
+            android:paddingBottom="6dp"
+            android:textColor="#FFFFFF"
+            android:textSize="15sp"
+            android:visibility="gone" />
+    </LinearLayout>
 </FrameLayout>
