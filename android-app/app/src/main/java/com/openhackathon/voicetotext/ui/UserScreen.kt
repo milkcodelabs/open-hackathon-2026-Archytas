@@ -1,5 +1,12 @@
 package com.openhackathon.voicetotext.ui
 
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
+import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.draw.alpha
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -133,13 +140,6 @@ private fun UserContent(state: ScreenState, actions: MainActions, onDevMode: () 
                 }
             }
         }
-        if (on) {
-            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(bottom = 10.dp)) {
-                Box(Modifier.size(10.dp).clip(CircleShape).background(Ok))
-                Spacer(Modifier.width(8.dp))
-                Text("Ενεργό", fontSize = 16.sp, fontWeight = FontWeight.SemiBold, color = Ok)
-            }
-        }
         MainSwitch(on = on, enabled = ready || on) { actions.toggleBubble() }
     }
 }
@@ -204,32 +204,44 @@ private fun Title(onDevMode: () -> Unit) {
     )
 }
 
-/** Shows or hides the floating button: brand gradient when it can be turned on, dark with a green edge when on. */
+/**
+ * Shows or hides the floating button. Off: solid brand blue with a soft glow, "Ενεργοποίηση".
+ * On: green, a pulsing dot with "Ενεργό" and "Πάτα για απενεργοποίηση" under it. Before the
+ * steps are done it is flat and muted.
+ */
 @Composable
 private fun MainSwitch(on: Boolean, enabled: Boolean, onClick: () -> Unit) {
-    val shape = RoundedCornerShape(22.dp)
+    val shape = RoundedCornerShape(24.dp)
     val fill = when {
-        on -> Brush.horizontalGradient(listOf(SurfaceSoft, SurfaceSoft))
-        enabled -> Brush.horizontalGradient(listOf(Brand, Violet))
-        else -> Brush.horizontalGradient(listOf(Surface, Surface))
+        on -> Ok
+        enabled -> Brand
+        else -> Surface
     }
-    val content = if (enabled) OnBg else Muted
-    Row(
-        horizontalArrangement = Arrangement.Center,
-        verticalAlignment = Alignment.CenterVertically,
+    val pulse = rememberInfiniteTransition(label = "live")
+    val dot by pulse.animateFloat(1f, 0.35f, infiniteRepeatable(tween(900), RepeatMode.Reverse), label = "dot")
+    Box(
+        contentAlignment = Alignment.Center,
         modifier = Modifier
             .fillMaxWidth()
-            .height(66.dp)
+            .height(72.dp)
+            .shadow(if (enabled) 18.dp else 0.dp, shape, ambientColor = fill, spotColor = fill)
             .clip(shape)
             .background(fill)
-            .border(1.5.dp, if (on) Ok.copy(alpha = 0.7f) else Color.Transparent, shape)
             .clickable(enabled = enabled, role = Role.Button, onClick = onClick),
     ) {
-        Icon(painterResource(if (on) R.drawable.ic_stop else R.drawable.ic_mic), contentDescription = null,
-            tint = content, modifier = Modifier.size(24.dp))
-        Spacer(Modifier.width(10.dp))
-        Text(if (on) "Απενεργοποίηση" else "Ενεργοποίηση", fontSize = 20.sp, fontWeight = FontWeight.SemiBold,
-            color = content, maxLines = 1)
+        if (on) {
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Box(Modifier.size(10.dp).alpha(dot).clip(CircleShape).background(Color.White))
+                    Spacer(Modifier.width(8.dp))
+                    Text("Ενεργό", fontSize = 21.sp, fontWeight = FontWeight.Bold, color = Color.White, maxLines = 1)
+                }
+                Text("Πάτα για απενεργοποίηση", fontSize = 13.sp, color = Color.White.copy(alpha = 0.85f), maxLines = 1)
+            }
+        } else {
+            Text("Ενεργοποίηση", fontSize = 21.sp, fontWeight = FontWeight.Bold,
+                color = if (enabled) Color.White else Muted, maxLines = 1)
+        }
     }
 }
 
