@@ -86,9 +86,6 @@ import com.openhackathon.voicetotext.ui.theme.SurfaceSoft
 import com.openhackathon.voicetotext.ui.theme.Thinking
 import java.util.Locale
 
-/** A dev-mode test recording and the sentence that was meant (empty when unknown). */
-data class SampleChoice(val path: String, val name: String, val reference: String)
-
 /** One personal acoustic model on the phone, as the screen shows it. */
 data class PersonalChoice(val key: String, val title: String, val mb: Long, val info: String)
 
@@ -111,7 +108,6 @@ data class ScreenState(
     val personalKey: String,
     /** The acoustic model in memory now, or null before the first recognition loads one. */
     val loadedModel: String?,
-    val samples: List<SampleChoice>,
     /** MB of the personal model still to download (0 when it is complete on the phone). */
     val personalMissingMb: Long,
     val llmOn: Boolean,
@@ -146,7 +142,6 @@ interface MainActions {
     fun setLlm(on: Boolean)
     fun selectLlmProvider(p: LlmCorrector.Provider)
     fun runCheck()
-    fun runSample(path: String)
     fun download()
     fun cancelDownload()
     fun downloadPersonal()
@@ -447,10 +442,8 @@ private fun remaining(seconds: Long): String = when {
 // ---------------------------------------------------------------------- voice model
 
 /**
- * Which acoustic model listens: the general one or a speaker's own, one row each, with the
- * model in memory right now; and the test recordings on the phone, run through the chosen
- * model with the meant sentence beside the result. A personal model is trained on one
- * person's voice, so it is only fair to judge it on that person's recordings.
+ * Which acoustic model the bubble (and the in-app microphone) listens with: the general one
+ * or a speaker's own, one row each, with the model in memory right now.
  */
 @Composable
 private fun VoiceModelCard(state: ScreenState, actions: MainActions) {
@@ -477,29 +470,6 @@ private fun VoiceModelCard(state: ScreenState, actions: MainActions) {
                     Text(o.title, fontSize = 17.sp, fontWeight = FontWeight.SemiBold, color = OnBg)
                     if (o.info.isNotBlank()) Text(o.info, fontSize = 13.sp, color = OnMuted)
                 }
-            }
-        }
-        if (state.samples.isNotEmpty()) {
-            Spacer(Modifier.height(12.dp))
-            Text("Δοκιμή με ηχογράφηση", fontSize = 16.sp, color = OnBg)
-            state.samples.forEach { s ->
-                Spacer(Modifier.height(8.dp))
-                OutlinedButton(
-                    onClick = { actions.runSample(s.path) },
-                    enabled = state.filesPresent && !state.busy,
-                    modifier = Modifier.fillMaxWidth().heightIn(min = 52.dp),
-                ) {
-                    Text("▶  ${s.name}" + (if (s.reference.isNotBlank()) "\n${s.reference}" else ""),
-                        fontSize = 15.sp, textAlign = TextAlign.Center)
-                }
-            }
-            if (state.result.isNotEmpty()) {
-                Spacer(Modifier.height(12.dp))
-                Text(state.result, fontSize = 20.sp, fontWeight = FontWeight.SemiBold, color = OnBg)
-            }
-            if (state.detail.isNotEmpty()) {
-                Spacer(Modifier.height(6.dp))
-                Text(state.detail, fontSize = 13.sp, color = OnMuted)
             }
         }
     }

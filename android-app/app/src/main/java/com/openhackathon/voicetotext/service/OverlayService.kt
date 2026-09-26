@@ -217,7 +217,10 @@ class OverlayService : Service() {
             setState(State.LOADING)
             Thread {
                 val ok = Recognizer.load(this)
-                main.post { setState(if (ok) State.IDLE else State.ERROR) }
+                main.post {
+                    setState(if (ok) State.IDLE else State.ERROR)
+                    toast(if (ok) "Μοντέλο: ${Recognizer.label(null)}" else (Recognizer.lastError ?: "Το μοντέλο δεν φορτώθηκε"))
+                }
             }.start()
         }
         return START_STICKY
