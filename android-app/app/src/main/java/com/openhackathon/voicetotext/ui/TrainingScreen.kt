@@ -31,6 +31,7 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
@@ -46,10 +47,12 @@ import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.openhackathon.voicetotext.R
@@ -154,6 +157,15 @@ object TrainingStore {
  */
 @Composable
 fun TrainingScreen(micGranted: Boolean, micBusy: Boolean, askMic: () -> Unit, onBack: () -> Unit) {
+    // text grows with the system font only up to 1.15x, as on the user screen, so the card fits
+    val d = LocalDensity.current
+    CompositionLocalProvider(LocalDensity provides Density(d.density, d.fontScale.coerceAtMost(1.15f))) {
+        TrainingContent(micGranted, micBusy, askMic, onBack)
+    }
+}
+
+@Composable
+private fun TrainingContent(micGranted: Boolean, micBusy: Boolean, askMic: () -> Unit, onBack: () -> Unit) {
     val ctx = LocalContext.current
     val recorder = remember { AudioRecorder() }
     val done = remember { mutableStateMapOf<Int, Float>().apply { putAll(TrainingStore.durations(ctx)) } }
@@ -179,8 +191,7 @@ fun TrainingScreen(micGranted: Boolean, micBusy: Boolean, askMic: () -> Unit, on
             if (pcm == null || pcm.size < AudioRecorder.SAMPLE_RATE / 2) { note = "Πολύ σύντομο, ξαναδοκίμασε."; return }
             TrainingStore.save(ctx, idx, pcm)
             done[idx] = pcm.size / AudioRecorder.SAMPLE_RATE.toFloat()
-            note = String.format(Locale("el"), "Αποθηκεύτηκε, %.1f δευτ.", done[idx])
-            TRAINING_SENTENCES.indices.map { (idx + 1 + it) % TRAINING_SENTENCES.size }.firstOrNull { it !in done }?.let { idx = it }
+            note = String.format(Locale("el"), "Αποθηκεύτηκε, %.1f δευτ. Άκου τη λήψη ή πάτα «Επόμ.».", done[idx])
         }
     }
 
@@ -217,8 +228,8 @@ fun TrainingScreen(micGranted: Boolean, micBusy: Boolean, askMic: () -> Unit, on
                     .padding(horizontal = 20.dp, vertical = 24.dp),
             ) {
                 Text("Πρόταση ${idx + 1}", fontSize = 14.sp, color = OnMuted)
-                Text(TRAINING_SENTENCES[idx], fontSize = 25.sp, fontWeight = FontWeight.SemiBold, color = OnBg,
-                    textAlign = TextAlign.Center, lineHeight = 32.sp, modifier = Modifier.padding(top = 10.dp))
+                Text(TRAINING_SENTENCES[idx], fontSize = 23.sp, fontWeight = FontWeight.SemiBold, color = OnBg,
+                    textAlign = TextAlign.Center, lineHeight = 30.sp, modifier = Modifier.padding(top = 10.dp))
                 Text(
                     when {
                         recording -> "Ακούω…"
@@ -280,7 +291,8 @@ fun TrainingScreen(micGranted: Boolean, micBusy: Boolean, askMic: () -> Unit, on
                     PlanRow(false, "Αποστολή σε GPU στο cloud")
                     PlanRow(false, "Προσαρμογή του μοντέλου στη φωνή σου (~10 λεπτά)")
                     PlanRow(false, "Το προσωπικό μοντέλο γυρίζει στο κινητό και δουλεύει χωρίς internet")
-                    Text("Σε αυτή την έκδοση οι ηχογραφήσεις μένουν μόνο στο κινητό. Δεν στέλνονται πουθενά.",
+                    Text("Λόγω του κόστους των GPU στο cloud, σε αυτή την έκδοση δεν γίνεται καμία εκπαίδευση: " +
+                        "οι ηχογραφήσεις μένουν μόνο στο κινητό και δεν στέλνονται πουθενά.",
                         fontSize = 14.sp, color = OnMuted)
                 }
             },
