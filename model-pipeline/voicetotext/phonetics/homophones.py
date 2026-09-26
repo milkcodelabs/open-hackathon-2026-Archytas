@@ -3,7 +3,7 @@
     voicetotext homophones el_homophones.bin --kenlm lm3_300k.bin --vocab lm3_300k.vocab
 
 Read by HomophoneIndex.kt. The released file was built from the same vocabulary and KenLM
-binary as el_3gram.gvtlm. ``--arpa`` reads the unigram probabilities straight from an ARPA
+binary as el_3gram.ngram. ``--arpa`` reads the unigram probabilities straight from an ARPA
 file (no kenlm module); near-equal spellings may then be ordered slightly differently,
 because the release used the 8-bit quantized KenLM binary's probabilities.
 

@@ -27,4 +27,4 @@ captures/
 # --- MODELS (the app downloads them to the phone; far too big for git) ---
 android-app/app/src/main/assets/
 *.onnx
-*.gvtlm
+*.ngram

@@ -6,7 +6,7 @@ the app's decoding parameters. Nothing here runs on the phone.
 | file the app downloads | made by |
 |---|---|
 | `omni.onnx`, `omni.labels.json` | `voicetotext export omni-phone` (`voicetotext/acoustic/omni.py`) |
-| `el_3gram.gvtlm` | `voicetotext lm prepare/build` + `voicetotext lm export-phone` (`voicetotext/decoding/lm.py`, `export_lm.py`) |
+| `el_3gram.ngram` | `voicetotext lm prepare/build` + `voicetotext lm export-phone` (`voicetotext/decoding/lm.py`, `export_lm.py`) |
 | `el_homophones.bin` | `voicetotext homophones` (`voicetotext/phonetics/homophones.py`) |
 | `el_gpt2.int8.onnx`, `el_gpt2.vocab.json`, `el_gpt2.merges.txt` | `voicetotext export gpt2` (`voicetotext/decoding/gpt2_export.py`) |
 | `test.wav` | `tests/fixtures/audio/clip1.wav` (FLEURS, CC-BY 4.0) |
@@ -65,7 +65,7 @@ on 8 FLEURS / Common Voice clips the difference was at most 7e-6 in log-probabil
 identical greedy text. The app normalizes the waveform to zero mean and unit variance
 before feeding it, like `OmniOnnxEmitter`.
 
-## The language model: `el_3gram.gvtlm`
+## The language model: `el_3gram.ngram`
 
 1. **Corpus** (`voicetotext lm prepare`): OPUS OpenSubtitles v2018 mono `el` (first 15M
    cleaned sentences) and Greek Wikipedia 20231101 shard 1/3 (`wikimedia/wikipedia`, all
@@ -98,7 +98,7 @@ before feeding it, like `OmniOnnxEmitter`.
 3. **n-gram** (`voicetotext lm build -c configs/lm_phone.yaml`): `lmplz -o 3 --prune 0 2 4
    --limit_vocab_file`, which writes the ARPA and a KenLM binary (the binary is for the
    Python beam search).
-4. **Phone format** (`voicetotext lm export-phone <name>.arpa el_3gram.gvtlm`): KenLM's
+4. **Phone format** (`voicetotext lm export-phone <name>.arpa el_3gram.ngram`): KenLM's
    binary is a C++ trie, so the ARPA is rewritten as sorted arrays that `NgramLm.kt`
    memory-maps and binary-searches (layout in `export_lm.py`; the file starts with `NGRAM1`). The homophone index starts with `HOMIDX1`. The published file: order
    3, 300,003 words (300k plus `<s>`, `</s>`, `<unk>`), 2,997,665 bigrams, 3,173,808

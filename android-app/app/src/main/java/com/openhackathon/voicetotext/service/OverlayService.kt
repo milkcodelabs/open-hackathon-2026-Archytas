@@ -189,7 +189,7 @@ class OverlayService : Service() {
         startInForeground()
         wm = getSystemService(Context.WINDOW_SERVICE) as WindowManager
         buildBubble()
-        Recognizer.restoreEngine(this)
+        Recognizer.restoreSettings(this)
         LlmCorrector.restore(this)
         Thread {
             val ok = Recognizer.load(this)
@@ -203,10 +203,9 @@ class OverlayService : Service() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         if (intent?.action == ACTION_STOP) { stopSelf(); return START_NOT_STICKY }
         if (intent?.action == ACTION_RELOAD) {
-            // the user switched engine in the panel: drop the old one and load the new one
+            // a setting or a model changed in the panel: load what is now wanted
             setState(State.LOADING)
             Thread {
-                Recognizer.releaseUnused()
                 val ok = Recognizer.load(this)
                 main.post { setState(if (ok) State.IDLE else State.ERROR) }
             }.start()
