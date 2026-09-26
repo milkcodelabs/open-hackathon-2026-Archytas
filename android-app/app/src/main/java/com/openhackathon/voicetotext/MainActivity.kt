@@ -30,6 +30,7 @@ import com.openhackathon.voicetotext.ui.MainActions
 import com.openhackathon.voicetotext.ui.MainScreen
 import com.openhackathon.voicetotext.ui.PersonalChoice
 import com.openhackathon.voicetotext.ui.ScreenState
+import com.openhackathon.voicetotext.ui.TrainingScreen
 import com.openhackathon.voicetotext.ui.UserScreen
 import com.openhackathon.voicetotext.ui.theme.VoicetotextTheme
 import kotlinx.coroutines.Dispatchers
@@ -110,11 +111,19 @@ class MainActivity : ComponentActivity() {
         setContent {
             VoicetotextTheme {
                 var dev by rememberSaveable { mutableStateOf(false) }
-                if (dev) {
-                    BackHandler { dev = false }
-                    MainScreen(state = screenState(), actions = actions, onExit = { dev = false })
-                } else {
-                    UserScreen(state = screenState(), actions = actions, onDevMode = { dev = true })
+                var training by rememberSaveable { mutableStateOf(false) }
+                val state = screenState()
+                when {
+                    dev -> {
+                        BackHandler { dev = false }
+                        MainScreen(state = state, actions = actions, onExit = { dev = false })
+                    }
+                    training -> {
+                        BackHandler { training = false }
+                        TrainingScreen(micGranted = state.mic, micBusy = state.bubbleOn,
+                            askMic = { actions.askMic() }, onBack = { training = false })
+                    }
+                    else -> UserScreen(state = state, actions = actions, onDevMode = { dev = true }, onTraining = { training = true })
                 }
             }
         }

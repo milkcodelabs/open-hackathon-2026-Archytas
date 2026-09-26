@@ -80,15 +80,15 @@ private val CardEdge = Color.White.copy(alpha = 0.06f)
  * [DEV_HOLD_MS]; lifting or dragging earlier does nothing.
  */
 @Composable
-fun UserScreen(state: ScreenState, actions: MainActions, onDevMode: () -> Unit) {
+fun UserScreen(state: ScreenState, actions: MainActions, onDevMode: () -> Unit, onTraining: () -> Unit) {
     val d = LocalDensity.current
     CompositionLocalProvider(LocalDensity provides Density(d.density, d.fontScale.coerceAtMost(MAX_FONT_SCALE))) {
-        UserContent(state, actions, onDevMode)
+        UserContent(state, actions, onDevMode, onTraining)
     }
 }
 
 @Composable
-private fun UserContent(state: ScreenState, actions: MainActions, onDevMode: () -> Unit) {
+private fun UserContent(state: ScreenState, actions: MainActions, onDevMode: () -> Unit, onTraining: () -> Unit) {
     val p by ModelDownloader.progress.collectAsState()
     val ready = state.mic && state.overlay && state.filesPresent
     val on = state.bubbleOn
@@ -130,6 +130,18 @@ private fun UserContent(state: ScreenState, actions: MainActions, onDevMode: () 
                 Spacer(Modifier.width(8.dp))
                 Text("Ενεργό", fontSize = 16.sp, fontWeight = FontWeight.SemiBold, color = Ok)
             }
+        }
+        Row(
+            horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(bottom = 10.dp)
+                .height(54.dp)
+                .clip(RoundedCornerShape(20.dp))
+                .border(1.5.dp, BrandLight.copy(alpha = 0.6f), RoundedCornerShape(20.dp))
+                .clickable(role = Role.Button, onClick = onTraining),
+        ) {
+            Text("Αρχική εκπαίδευση", fontSize = 18.sp, fontWeight = FontWeight.SemiBold, color = BrandLight, maxLines = 1)
         }
         MainSwitch(on = on, enabled = ready || on) { actions.toggleBubble() }
     }
