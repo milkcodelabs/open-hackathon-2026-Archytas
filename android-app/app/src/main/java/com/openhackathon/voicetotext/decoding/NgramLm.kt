@@ -142,8 +142,11 @@ class NgramLm private constructor(
         private const val TAG = "NgramLm"
         private val MAGIC = "NGRAM1\u0000\u0000".toByteArray(Charsets.US_ASCII)
         private const val ID_BITS = 21
-        /** Roughly the cost of an unseen word; mirrors pyctcdecode's unk_score_offset. */
-        const val OOV_LOGP = -10f
+        /**
+         * log10 P(<unk>): the unigram KenLM gives an unseen word in the ARPA this file was made
+         * from (lm3_300k.arpa: -6.487879). BeamSearch adds pyctcdecode's unk_score_offset on top.
+         */
+        const val OOV_LOGP = -6.487879f
 
         fun load(file: File): NgramLm {
             val ch = RandomAccessFile(file, "r").channel
