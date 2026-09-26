@@ -53,9 +53,9 @@ object ModelDownloader {
         ModelFile("omni.labels.json", 235L,
             "97cc3eb93df00bc5c144c09d29432d441b6b575e6cf865e5625cefbccdb823e3", "ετικέτες", "omni"),
         ModelFile("el_3gram.gvtlm", 94_892_390L,
-            "b9c45410d1a2215d0997862fab7a2c1aef5dd01e6dc1f1bb66a14e6c719c1426", "γλωσσικό μοντέλο"),
+            "ef3c02e4ea8c33ce45220664b8111d6840f7f66bcc97e4bd4f138fd10eb7361a", "γλωσσικό μοντέλο"),
         ModelFile("el_homophones.bin", 10_498_299L,
-            "9d6b6da6c8b86c671853a96f97b68e7c8795e1bec6e976825ce08c27404c2159", "ορθογραφία"),
+            "6ef093b3aa9efd8a3d3beba1c24f781ee02d84f64348104d52d150aedb5eef2e", "ορθογραφία"),
         ModelFile("el_gpt2.int8.onnx", 163_794_538L,
             "02d09b774689a94792e6e8771fd013ce47cf8cf19b45873541686f10f6f47019", "νευρωνικό γλωσσικό μοντέλο", "gpt2"),
         ModelFile("el_gpt2.vocab.json", 1_719_026L,
@@ -70,7 +70,7 @@ object ModelDownloader {
 
     /**
      * The speaker's own fine-tuned acoustic model (Omnilingual CTC 300M v2 adapted on their
-     * recordings, M7 run r5) with its labels (a different letter order from the base model's)
+     * recordings) with its labels (a different letter order from the base model's)
      * and a short description for the screen. Fetched only when the user asks for it, never at
      * start-up; Recognizer uses it instead of omni.onnx while the "Προσωπικό μοντέλο" switch is on.
      */
@@ -112,7 +112,9 @@ object ModelDownloader {
     private fun partial(ctx: Context, f: ModelFile) = File(Recognizer.filesRoot(ctx), f.name + ".part")
 
     /**
-     * A file counts as present when its size matches (the hash was checked when it arrived).
+     * A file counts as present when its size matches (the hash was checked when it arrived)
+     * and, for the two custom formats, its header is the current one. A header-only change
+     * keeps the size, so without that check a phone would keep the old file forever.
      * A wrong file makes its whole group missing, so a model and its labels are replaced together.
      */
     fun missing(ctx: Context): List<ModelFile> = missingOf(ctx, FILES)
@@ -121,9 +123,23 @@ object ModelDownloader {
     fun missingPersonal(ctx: Context): List<ModelFile> = missingOf(ctx, PERSONAL)
 
     private fun missingOf(ctx: Context, files: List<ModelFile>): List<ModelFile> {
-        val bad = files.filter { target(ctx, it).length() != it.bytes }.map { it.group }.toSet()
+        val bad = files.filter { stale(ctx, it) }.map { it.group }.toSet()
         return files.filter { it.group in bad }
     }
+
+    private fun stale(ctx: Context, f: ModelFile): Boolean {
+        val file = target(ctx, f)
+        if (file.length() != f.bytes) return true
+        val magic = HEADER[f.name] ?: return false
+        val got = ByteArray(magic.size)
+        val n = runCatching { file.inputStream().use { it.read(got) } }.getOrDefault(-1)
+        return n != magic.size || !got.contentEquals(magic)
+    }
+
+    private val HEADER = mapOf(
+        "el_3gram.gvtlm" to "NGRAM1\u0000\u0000".toByteArray(Charsets.US_ASCII),
+        "el_homophones.bin" to "HOMIDX1\u0000".toByteArray(Charsets.US_ASCII),
+    )
 
     fun complete(ctx: Context): Boolean = missing(ctx).isEmpty()
 

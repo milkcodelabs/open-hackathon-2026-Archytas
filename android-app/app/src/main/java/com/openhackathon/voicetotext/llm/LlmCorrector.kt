@@ -32,7 +32,7 @@ import org.json.JSONObject
  */
 object LlmCorrector {
     private const val TAG = "LlmCorrector"
-    private const val PREFS = "gvt"
+    private const val PREFS = "settings"
     private const val KEY_ON = "use_llm"
     private const val KEY_PROVIDER = "llm_provider"
 

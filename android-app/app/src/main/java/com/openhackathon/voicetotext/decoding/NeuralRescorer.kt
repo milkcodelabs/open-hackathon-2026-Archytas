@@ -10,7 +10,6 @@ import java.nio.LongBuffer
 /**
  * Layer 2c: a small Greek GPT-2 (lighteternal/gpt2-finetuned-greek, 124M, int8) re-ranks the
  * best sentences using the whole sentence and the text already written in the field.
- * Mirrors `greek_vt/decoding/neural_lm.py`.
  *
  * It never writes text; it only re-orders sentences the acoustic model and the beam search
  * produced, and its score is added to theirs:
@@ -20,7 +19,7 @@ import java.nio.LongBuffer
  * A sentence whose acoustic score is more than [acousticGuard] nats below the best one can
  * never win, so fluency cannot override what was heard.
  *
- * Measured on the desktop (the same int8 graph, weights chosen on FLEURS dev + half of CV):
+ * Measured with this int8 graph (weights chosen on FLEURS dev + half of Common Voice):
  * WER 0.129 -> 0.114 on FLEURS test and 0.132 -> 0.123 on the CV half it never saw.
  */
 class NeuralRescorer(
@@ -46,8 +45,7 @@ class NeuralRescorer(
         val t0 = System.nanoTime()
         session = env.createSession(modelFile.absolutePath, opts)
         Log.i(TAG, "neural LM ready in ${(System.nanoTime() - t0) / 1_000_000} ms")
-        // One fixed sentence: its token ids and score must equal the desktop's
-        // (greek_vt.decoding.neural_lm.OnnxNeuralLM), or the tokenizer port is wrong.
+        // One fixed sentence: a broken tokenizer or graph shows up in the log right away.
         runCatching {
             Log.i(TAG, "probe ids ${tokenizer.encode(PROBE).joinToString(",")}")
             Log.i(TAG, "probe logp ${score(listOf(PROBE), "")[0]}")

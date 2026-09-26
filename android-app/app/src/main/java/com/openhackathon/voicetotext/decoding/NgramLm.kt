@@ -8,7 +8,7 @@ import java.nio.ByteOrder
 import java.nio.channels.FileChannel
 
 /**
- * Word n-gram language model, memory mapped, written by `greek_vt/decoding/export_lm.py`.
+ * Word n-gram language model, memory mapped.
  *
  * KenLM's own binary is a C++ trie and reading it here would mean shipping the NDK, so the
  * same information is stored as sorted arrays and looked up with a binary search. Scores are
@@ -140,6 +140,7 @@ class NgramLm private constructor(
 
     companion object {
         private const val TAG = "NgramLm"
+        private val MAGIC = "NGRAM1\u0000\u0000".toByteArray(Charsets.US_ASCII)
         private const val ID_BITS = 21
         /** Roughly the cost of an unseen word; mirrors pyctcdecode's unk_score_offset. */
         const val OOV_LOGP = -10f
@@ -148,7 +149,7 @@ class NgramLm private constructor(
             val ch = RandomAccessFile(file, "r").channel
             val buf = ch.map(FileChannel.MapMode.READ_ONLY, 0, ch.size()).order(ByteOrder.LITTLE_ENDIAN)
             val magic = ByteArray(8).also { buf.get(it) }
-            require(String(magic, 0, 6) == "GVTLM1") { "not a gvtlm file: ${file.name}" }
+            require(magic.contentEquals(MAGIC)) { "not an n-gram LM file: ${file.name}" }
             val order = buf.int
             val vocabSize = buf.int
             val nUni = buf.int

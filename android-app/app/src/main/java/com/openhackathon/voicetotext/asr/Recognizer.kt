@@ -30,15 +30,13 @@ import kotlinx.coroutines.flow.asStateFlow
  */
 object Recognizer {
     private const val TAG = "Recognizer"
-    private const val PREFS = "gvt"
+    private const val PREFS = "settings"
     private const val KEY_ENGINE = "engine"
     private const val KEY_LM = "use_lm"
     private const val KEY_NEURAL = "use_neural_lm"
     private const val KEY_PERSONAL = "use_personal_model"
 
     enum class Engine { OMNI, CTC }
-
-    private const val KEY_OMNI_DEFAULT = "omni_default_applied"
 
     @Volatile private var ctc: CtcModel? = null
     /** Which CTC engine [ctc] holds: both CTC engines share the slot, never both loaded. */
@@ -66,7 +64,7 @@ object Recognizer {
     /** Words already in the text field that seed the LM (the 3-gram uses two). */
     private const val CONTEXT_WORDS = 2
 
-    /** Layer 2. Off means the phone runs bare greedy decoding, which is what it did before. */
+    /** Layer 2. Off means bare greedy decoding of layer 1. */
     @Volatile var useLanguageModel: Boolean = true
         private set
     /** Layer 2c, the neural LM that re-ranks the best sentences with context. */
@@ -75,7 +73,7 @@ object Recognizer {
     /** Use the speaker's own acoustic model (omni.personal.*) when it is on the phone. */
     @Volatile var usePersonal: Boolean = true
         private set
-    @Volatile var speakerId: String = "default"   // TODO(M5): set by enrollment
+    @Volatile var speakerId: String = "default"
     @Volatile var lastError: String? = null
 
     @Volatile var engine: Engine = Engine.OMNI
@@ -88,12 +86,6 @@ object Recognizer {
         val p = prefs(ctx)
         engine = runCatching { Engine.valueOf(p.getString(KEY_ENGINE, Engine.OMNI.name)!!) }
             .getOrDefault(Engine.OMNI)
-        // Omnilingual became layer 1 after the saved choice was made: switch once, when its
-        // files are there. After that the user's own choice is kept.
-        if (!p.getBoolean(KEY_OMNI_DEFAULT, false) && omniPresent(ctx)) {
-            engine = Engine.OMNI
-            p.edit().putString(KEY_ENGINE, engine.name).putBoolean(KEY_OMNI_DEFAULT, true).apply()
-        }
         useLanguageModel = p.getBoolean(KEY_LM, true)
         useNeuralLm = p.getBoolean(KEY_NEURAL, true)
         usePersonal = p.getBoolean(KEY_PERSONAL, true)
@@ -101,7 +93,7 @@ object Recognizer {
 
     // ------------------------------------------------------------------ personal model
     //
-    // A speaker's fine-tuned Omnilingual (e.g. the M7 run) lives next to the downloaded one
+    // A speaker's fine-tuned Omnilingual lives next to the downloaded one
     // under its own names. ModelDownloader never touches these files, so the two cannot be
     // mixed: the personal model is used only when BOTH its graph and its labels are present
     // (its labels may list the letters in a different order than the base model's).
@@ -207,7 +199,7 @@ object Recognizer {
 
     val ready: Boolean get() = ctc != null && ctcEngine == engine
 
-    /** alpha/beta tuned on FLEURS dev for each acoustic model (RESULTS.md). */
+    /** alpha/beta tuned on FLEURS dev for each acoustic model. */
     private fun beamFor(e: Engine, labels: List<String>, n: NgramLm, words: List<String>): BeamSearch =
         if (e == Engine.OMNI) BeamSearch(labels, n, alpha = 0.7f, beta = 3.0f, personalWords = words)
         else BeamSearch(labels, n, alpha = 0.7f, beta = 4.0f, personalWords = words)
@@ -244,7 +236,7 @@ object Recognizer {
 
     /**
      * Text -> the model's words: lowercase, NFC, every character outside the label set
-     * becomes a space. The same rule the desktop normalizer applies to references.
+     * becomes a space.
      */
     fun normalizeWords(text: String, labels: List<String>): List<String> {
         val chars = labels.filter { it.length == 1 && it != "|" }.map { it[0] }.toSet()

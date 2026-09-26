@@ -4,9 +4,8 @@ import java.text.Normalizer
 import java.util.Locale
 
 /**
- * The pronunciation class of a Greek word. Mirrors `greek_vt/phonetics/homophones.py`
- * `sound_key` rule for rule: the phone looks words up in an index the desktop built, so
- * both sides must compute the same key.
+ * The pronunciation class of a Greek word. Words are looked up in `el_homophones.bin` by
+ * this key, so it must follow exactly the rules the index was built with.
  *
  *  1. lowercase, NFD, drop the stress mark; a diaeresis makes its ι/υ a stand-alone /i/;
  *  2. αυ ευ ηυ keep their consonant value (av ev iv);

@@ -3,7 +3,6 @@ package com.openhackathon.voicetotext.decoding
 
 /**
  * Layer 2b: the language model, not the acoustic model, chooses Greek spellings.
- * Mirrors `greek_vt/decoding/spelling.py`.
  *
  * The acoustic model cannot tell ι η υ ει οι apart (or ο/ω, ε/αι, single/double consonants):
  * they sound the same. For every word of every N-best hypothesis this offers the real

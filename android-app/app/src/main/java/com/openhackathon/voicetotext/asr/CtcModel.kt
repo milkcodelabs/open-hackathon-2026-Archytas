@@ -11,8 +11,8 @@ import kotlin.math.sqrt
 /**
  * The acoustic layer: 16 kHz mono waveform in, [Emissions] out.
  *
- * Mirrors `greek_vt/acoustic/ctc_model.py`. The exported graph starts *after* the
- * Wav2Vec2 feature extractor's normalization, so the same zero-mean/unit-variance step is
+ * The ONNX graph starts *after* the Wav2Vec2 feature extractor's normalization, so the same
+ * zero-mean/unit-variance step is
  * applied here; getting this wrong silently degrades every number downstream.
  */
 class CtcModel(private val modelFile: File, labelsFile: File) : AutoCloseable {
@@ -75,7 +75,7 @@ class CtcModel(private val modelFile: File, labelsFile: File) : AutoCloseable {
         private const val INPUT = "input_values"
 
         /**
-         * The labels file is the JSON array written by `gvt export onnx`. Uses the platform
+         * The labels file is a JSON array of strings, one per output column. Uses the platform
          * JSON parser so that escapes (the vocabulary contains a bare combining acute, U+0301)
          * are handled correctly.
          */

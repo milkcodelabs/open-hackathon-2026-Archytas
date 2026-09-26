@@ -59,8 +59,7 @@ class AudioRecorder {
 
         /**
          * Minimal WAV reader for files pushed with `adb push`: 16-bit or 32-bit float PCM,
-         * mono or stereo, any rate. Resampling is linear, which is adequate for a parity
-         * check; the Python side uses torchaudio's proper resampler.
+         * mono or stereo, any rate. Resampling is linear, which is adequate for test clips.
          */
         fun readWav(file: File, targetRate: Int = SAMPLE_RATE): FloatArray {
             RandomAccessFile(file, "r").use { f ->

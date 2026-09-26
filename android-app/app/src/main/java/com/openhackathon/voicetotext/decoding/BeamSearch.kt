@@ -10,7 +10,7 @@ import kotlin.math.pow
 
 /**
  * Layer 2a: CTC prefix beam search with a word n-gram language model, the same algorithm and
- * constants as pyctcdecode on the desktop.
+ * constants as pyctcdecode.
  *
  * The language score is applied once per completed word, at the word boundary, exactly as
  * pyctcdecode does; partial words carry no LM score until they are finished, but a partial
@@ -21,8 +21,7 @@ import kotlin.math.pow
  *    first words of this utterance, so "θα πάω στο" is continued, not restarted;
  *  - **the speaker's own words**: names and places outside the 300k vocabulary are neither
  *    cut as dead ends nor scored as unknown. They get a personal probability mixed in
- *    linearly, as the desktop's interpolated personal LM does:
- *    P = (1 - lam) P_general + lam / |personal words|.
+ *    linearly: P = (1 - lam) P_general + lam / |personal words|.
  */
 class BeamSearch(
     private val labels: List<String>,
@@ -32,16 +31,15 @@ class BeamSearch(
     private val beamWidth: Int = 128,
     /**
      * Labels below this posterior are not even considered at a frame. e^-5, pyctcdecode's
-     * token_min_logp, which is what the desktop numbers were measured with. The old 0.001
-     * let 1.9 labels per frame through on Omnilingual (1.2 on wav2vec2) and the beam
-     * search took 15 s for a 5 s clip.
+     * token_min_logp. A looser 0.001 lets 1.9 labels per frame through on Omnilingual (1.2 on
+     * wav2vec2) and the beam search takes 15 s for a 5 s clip.
      */
     private val pruneProb: Float = 0.0067f,
     /** Drop hypotheses this far (natural log) below the best one; pyctcdecode's beam_prune_logp. */
     private val beamPruneLogp: Float = -10f,
     /** The speaker's own vocabulary, normalized (lowercase Greek). */
     personalWords: Collection<String> = emptyList(),
-    /** Interpolation weight of the personal words; the profile default on the desktop. */
+    /** Interpolation weight of the personal words. */
     private val personalWeight: Float = 0.1f,
     /** Extra bonus for personal words, natural log; 0 = the interpolation alone. */
     private val hotwordWeight: Float = 0f,

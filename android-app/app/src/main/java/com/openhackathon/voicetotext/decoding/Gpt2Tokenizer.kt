@@ -6,7 +6,7 @@ import java.util.regex.Pattern
 
 /**
  * GPT-2 byte-level BPE encoder, the tokenizer of the layer-2c neural LM
- * (`el_gpt2.vocab.json` + `el_gpt2.merges.txt`, written by `neural_lm_export.py`).
+ * (`el_gpt2.vocab.json` + `el_gpt2.merges.txt`).
  *
  * Same three steps as Hugging Face's GPT2Tokenizer:
  *  1. split the text with GPT-2's pattern (a leading space stays with its word);

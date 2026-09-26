@@ -7,10 +7,10 @@ import java.nio.ByteOrder
 import java.nio.channels.FileChannel
 
 /**
- * Sound key -> real spellings of that sound, most frequent first. Memory mapped, written by
- * `gvt lm homophones` (`greek_vt/phonetics/homophones.py`, format GVTHOM1):
+ * Sound key -> real spellings of that sound, most frequent first. Memory mapped from
+ * `el_homophones.bin`:
  *
- *     magic "GVTHOM1\0", int32 n, (n+1) int32 key offsets, (n+1) int32 value offsets,
+ *     8-byte magic, int32 n, (n+1) int32 key offsets, (n+1) int32 value offsets,
  *     key blob (UTF-8), value blob (UTF-8, spellings separated by one space)
  *
  * Keys are sorted by their UTF-8 bytes. They hold only Greek and Latin letters, all below
@@ -51,7 +51,7 @@ class HomophoneIndex private constructor(
     }
 
     companion object {
-        private val MAGIC = "GVTHOM1\u0000".toByteArray(Charsets.US_ASCII)
+        private val MAGIC = "HOMIDX1\u0000".toByteArray(Charsets.US_ASCII)
 
         fun load(file: File): HomophoneIndex {
             val ch = RandomAccessFile(file, "r").channel

@@ -171,7 +171,7 @@ class TypingAccessibilityService : AccessibilityService() {
     /** Some fields refuse SET_TEXT but accept a paste of the clipboard. */
     private fun paste(node: AccessibilityNodeInfo, text: String): Boolean {
         val cm = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-        cm.setPrimaryClip(ClipData.newPlainText("greek_vt", text))
+        cm.setPrimaryClip(ClipData.newPlainText("voice-to-text", text))
         node.performAction(AccessibilityNodeInfo.ACTION_FOCUS)
         return node.performAction(AccessibilityNodeInfo.ACTION_PASTE)
     }
@@ -253,7 +253,7 @@ class TypingAccessibilityService : AccessibilityService() {
             if (text.isBlank()) return "empty"
             instance?.insert(text)?.let { Log.i(TAG, "inserted via $it"); return "typed" }
             val cm = ctx.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-            cm.setPrimaryClip(ClipData.newPlainText("greek_vt", text))
+            cm.setPrimaryClip(ClipData.newPlainText("voice-to-text", text))
             Log.i(TAG, "no editable field, copied to the clipboard")
             return "clipboard"
         }
@@ -274,7 +274,7 @@ class TypingAccessibilityService : AccessibilityService() {
                 return "missing"
             }
             val cm = ctx.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-            cm.setPrimaryClip(ClipData.newPlainText("greek_vt", new))
+            cm.setPrimaryClip(ClipData.newPlainText("voice-to-text", new))
             Log.i(TAG, "typed text not found, copied the correction to the clipboard")
             return "clipboard"
         }
@@ -298,7 +298,7 @@ class TypingAccessibilityService : AccessibilityService() {
             }
             val text = newWords.joinToString(" ")
             val cm = ctx.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-            cm.setPrimaryClip(ClipData.newPlainText("greek_vt", text))
+            cm.setPrimaryClip(ClipData.newPlainText("voice-to-text", text))
             Log.i(TAG, "typed words not found, copied the correction to the clipboard")
             return "clipboard"
         }

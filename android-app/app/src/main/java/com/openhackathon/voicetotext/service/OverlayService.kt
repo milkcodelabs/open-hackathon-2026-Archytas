@@ -1264,10 +1264,10 @@ class OverlayService : Service() {
 
     companion object {
         private const val TAG = "OverlayService"
-        private const val CHANNEL = "gvt_overlay"
+        private const val CHANNEL = "overlay"
         private const val NOTIF_ID = 1001
-        const val ACTION_STOP = "gr.greekvt.STOP"
-        const val ACTION_RELOAD = "gr.greekvt.RELOAD"
+        const val ACTION_STOP = "com.openhackathon.voicetotext.STOP"
+        const val ACTION_RELOAD = "com.openhackathon.voicetotext.RELOAD"
         /** How long the bubble waits for the LLM before typing the phone's sentence. */
         private const val LLM_WAIT_MS = 2_500L
         /** A keyboard gone for less than this (restarting after the text changed) keeps the choice. */

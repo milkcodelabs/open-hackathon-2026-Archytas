@@ -6,7 +6,7 @@ import kotlin.math.ln
 /**
  * The (T, V) log-probability matrix produced by the CTC acoustic layer.
  *
- * This is the unit of work, mirroring `greek_vt/types.py`. Argmax strings are *views*
+ * This is the unit of work. Argmax strings are *views*
  * computed on demand by [greedyDecode]; they are never the stored representation, because
  * everything above the acoustic layer (beam search, speaker adaptation, correction) needs
  * the full distribution, not the winning character.
