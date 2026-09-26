@@ -52,6 +52,7 @@ import android.widget.Toast
 import androidx.core.view.ViewCompat
 import androidx.core.widget.TextViewCompat
 import androidx.core.view.WindowInsetsCompat
+import java.io.File
 import java.util.concurrent.Callable
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
@@ -1302,6 +1303,8 @@ class OverlayService : Service() {
         if (wav.size < AudioRecorder.SAMPLE_RATE / 5) { setState(State.IDLE); toast("Πολύ σύντομο"); return }
         setState(State.THINKING)
         Thread {
+            // the audio the model got, for checking what reached it (overwritten every time)
+            if (id == "mic" || id == "ptt") runCatching { AudioRecorder.writeWav(File(Recognizer.filesRoot(this), "last_dictation.wav"), wav) }
             // what is already written in the field: layer 2 continues it (read on this thread,
             // before the result is typed, so it never includes the new words)
             val context = TypingAccessibilityService.contextBefore()
