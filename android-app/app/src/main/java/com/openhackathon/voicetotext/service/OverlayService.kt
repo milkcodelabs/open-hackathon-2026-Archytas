@@ -30,6 +30,7 @@ import android.os.Looper
 import android.os.SystemClock
 import android.text.TextUtils
 import android.util.DisplayMetrics
+import android.util.TypedValue
 import android.util.Log
 import android.media.AudioManager
 import android.view.Gravity
@@ -43,13 +44,13 @@ import android.view.ViewGroup
 import android.view.WindowManager
 import android.view.animation.PathInterpolator
 import android.widget.FrameLayout
-import android.widget.HorizontalScrollView
 import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.ProgressBar
 import android.widget.TextView
 import android.widget.Toast
 import androidx.core.view.ViewCompat
+import androidx.core.widget.TextViewCompat
 import androidx.core.view.WindowInsetsCompat
 import java.util.concurrent.Callable
 import java.util.concurrent.Executors
@@ -67,9 +68,10 @@ import kotlin.math.abs
  * The bar keeps its two targets in the corners, Undo far left and the mic far right, with
  * nothing tappable between them. Floating, a small Undo bubble slides out from behind the
  * circle after each typed sentence and tucks itself back after a few seconds or on the next tap.
- * When the typed sentence has words the recognizer was unsure of, the alternatives for the
- * first such word slide in between the two buttons; tapping one rewrites that word in the
- * field, then the next unsure word is offered.
+ * When the typed sentence has words the recognizer was unsure of, a panel opens above the
+ * docked bar with up to three big options for the first such word (what was typed, with a
+ * tick, and the two likeliest alternatives); tapping one rewrites that word in the field, then
+ * the next unsure word is offered. Its close button drops the rest.
  * With the LLM switch on and a network, the sentence is first checked by [LlmCorrector]; if
  * it is slow, the phone's sentence is typed at once (a ring spins around the mic) and the
  * answer replaces it when it comes, with the phone's words offered back as the alternative.
@@ -99,8 +101,9 @@ class OverlayService : Service() {
     private lateinit var icon: ImageView
     private lateinit var pulse: View
     private lateinit var spinner: ProgressBar
-    private lateinit var strip: HorizontalScrollView
-    private lateinit var chips: LinearLayout
+    private lateinit var choicePanel: LinearLayout
+    private lateinit var choiceCounter: TextView
+    private lateinit var choiceRow: LinearLayout
     private lateinit var suggestionBox: LinearLayout
     private lateinit var suggestionHeader: TextView
     private lateinit var dockTrack: View
@@ -110,7 +113,7 @@ class OverlayService : Service() {
 
     private val bg = GradientDrawable().apply { shape = GradientDrawable.RECTANGLE }
     private val ring = GradientDrawable().apply { shape = GradientDrawable.OVAL }
-    private val stripBg = GradientDrawable().apply {
+    private val choiceBg = GradientDrawable().apply {
         shape = GradientDrawable.RECTANGLE
         setColor(0xF21C2033.toInt())
     }
@@ -146,10 +149,10 @@ class OverlayService : Service() {
     private var pulseAnim: ValueAnimator? = null
     private var longPressed = false
 
-    /** Choice strip: shown while [choice] is open in the bar; progress 0 = full bar, 1 = strip open. */
+    /** The word-choice panel above the docked bar is shown while [choice] is open; [choiceExtra]
+     *  is how far it makes the bar's window grow upward. */
     private var optionsShown = false
-    private var optionsProgress = 0f
-    private var optionsAnim: ValueAnimator? = null
+    private var choiceExtra = 0
     /** When the open choice was last hidden by the keyboard going away. */
     private var hiddenSince = 0L
 
@@ -224,7 +227,7 @@ class OverlayService : Service() {
         running = false
         readyFlow.value = false
         if (instance === this) instance = null
-        colorAnim?.cancel(); pulseAnim?.cancel(); optionsAnim?.cancel()
+        colorAnim?.cancel(); pulseAnim?.cancel()
         llmPool.shutdownNow()
         main.removeCallbacks(imePoll)
         main.removeCallbacks(longPress)
@@ -264,7 +267,7 @@ class OverlayService : Service() {
         undoButton.setOnClickListener { onUndo() }
         undoSatellite.setOnClickListener { onUndo() }
         applyColor(State.LOADING.color)
-        buildStrip()
+        buildChoicePanel()
 
         params = WindowManager.LayoutParams(
             bubbleSize(),
@@ -418,7 +421,6 @@ class OverlayService : Service() {
     private fun circleSize() = dp(68)
     private fun barHeight() = dp(56)
     private fun barMargin() = dp(8)
-    private fun stripGap() = dp(8)
     private fun chipHeight() = dp(42)
     private fun imeThreshold() = dp(64)
     private fun panelGap() = dp(6)
@@ -517,9 +519,10 @@ class OverlayService : Service() {
     private fun shapeBar() {
         val w = screenW() - 2 * barMargin()
         val h = barHeight()
-        // the suggestion panel adds height above the bar; the bar itself stays on the keyboard
-        val y = (screenH() - imeHeight - h - panelExtra).coerceAtLeast(0)
-        placeWindow(barMargin(), y, w, h + panelExtra)
+        // a suggestion or word-choice panel adds height above the bar; the bar stays on the keyboard
+        val extra = panelExtra + choiceExtra
+        val y = (screenH() - imeHeight - h - extra).coerceAtLeast(0)
+        placeWindow(barMargin(), y, w, h + extra)
 
         // two big targets in the far corners (Fitts), nothing tappable in between
         shapeInner(h, h, h / 2f, Gravity.END or Gravity.BOTTOM)
@@ -527,18 +530,14 @@ class OverlayService : Service() {
         undoButton.visibility = View.VISIBLE
         updateUndoButton()
 
-        // the word-choice strip opens in the empty middle, between the two buttons
-        val p = optionsProgress
-        val sw = (w - 2 * h - 2 * stripGap()).coerceAtLeast(0)
-        val lp = strip.layoutParams as FrameLayout.LayoutParams
-        if (lp.width != sw || lp.leftMargin != h + stripGap()) {
-            lp.width = sw
-            lp.leftMargin = h + stripGap()
-            strip.layoutParams = lp
+        // the word choices have their own panel at the top of the window, full bar width
+        val lp = choicePanel.layoutParams as FrameLayout.LayoutParams
+        if (lp.width != w || lp.height != choicePanelHeight()) {
+            lp.width = w
+            lp.height = choicePanelHeight()
+            lp.gravity = Gravity.TOP or Gravity.START
+            choicePanel.layoutParams = lp
         }
-        strip.alpha = p
-        strip.translationX = (1f - p) * dp(32)
-        strip.visibility = if (p > 0f) View.VISIBLE else View.GONE
     }
 
     private fun shapeCircle() {
@@ -548,7 +547,7 @@ class OverlayService : Service() {
         val y = bubbleY.coerceIn(0, (screenH() - s).coerceAtLeast(0))
         placeWindow(x, y, s, s)
         shapeInner(circleSize(), circleSize(), circleSize() / 2f, Gravity.CENTER)
-        strip.visibility = View.GONE
+        choicePanel.visibility = View.GONE
         dockTrack.visibility = View.GONE
         undoButton.visibility = View.GONE
     }
@@ -619,29 +618,90 @@ class OverlayService : Service() {
 
     private var choice: Choice? = null
 
-    private fun buildStrip() {
-        chips = LinearLayout(this).apply {
+    private fun choicePanelHeight() = dp(132)
+
+    /**
+     * The word-choice panel: a title with the "1/3" counter and a close button, and one row of
+     * up to three big options. Sized and placed above the docked bar by [shapeBar].
+     */
+    private fun buildChoicePanel() {
+        choiceBg.cornerRadius = dp(20).toFloat()
+        val header = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            val pad = (barHeight() - chipHeight()) / 2
-            setPadding(pad, 0, pad, 0)
         }
-
-        stripBg.cornerRadius = barHeight() / 2f
-        strip = HorizontalScrollView(this).apply {
-            isHorizontalScrollBarEnabled = false
-            overScrollMode = View.OVER_SCROLL_NEVER
-            background = stripBg
-            clipToOutline = true
+        header.addView(TextView(this).apply {
+            text = "Διάλεξε τη σωστή λέξη"
+            setTextColor(0xCCFFFFFF.toInt())
+            textSize = 15f
+            maxLines = 1
+            ellipsize = TextUtils.TruncateAt.END
+            setPadding(dp(8), 0, 0, 0)
+        }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        choiceCounter = TextView(this).apply {
+            setTextColor(0x99FFFFFF.toInt())
+            textSize = 14f
+            setPadding(dp(8), 0, dp(8), 0)
+        }
+        header.addView(choiceCounter, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+        header.addView(FrameLayout(this).apply {
+            contentDescription = "κλείσιμο επιλογών"
+            isClickable = true
+            background = secondaryBg()
+            addView(ImageView(this@OverlayService).apply {
+                setImageResource(R.drawable.ic_close)
+                importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+            }, FrameLayout.LayoutParams(dp(20), dp(20), Gravity.CENTER))
+            pressFeedback(this)
+            setOnClickListener { dismissChoice() }
+        }, LinearLayout.LayoutParams(dp(40), dp(40)))
+        choiceRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+        }
+        choicePanel = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            background = choiceBg
             elevation = dp(10).toFloat()
-            alpha = 0f
+            setPadding(dp(8), dp(8), dp(8), dp(10))
             visibility = View.GONE
-            addView(chips, FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.MATCH_PARENT))
+            addView(header, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(44)))
+            addView(choiceRow, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(64)).apply { topMargin = dp(6) })
         }
-        root.addView(
-            strip,
-            FrameLayout.LayoutParams(0, barHeight(), Gravity.START or Gravity.BOTTOM),
-        )
+        root.addView(choicePanel, FrameLayout.LayoutParams(0, choicePanelHeight(), Gravity.TOP or Gravity.START))
+    }
+
+    /** One big word option; [current] is what the field holds now, in the mic's blue with a tick. */
+    private fun makeOption(label: String, current: Boolean, onClick: () -> Unit) = TextView(this).apply {
+        text = if (current) "✓ $label" else label
+        setTextColor(Color.WHITE)
+        typeface = Typeface.DEFAULT_BOLD
+        gravity = Gravity.CENTER
+        maxLines = 2
+        setPadding(dp(6), dp(4), dp(6), dp(4))
+        // a long word shrinks to fit its button instead of being cut
+        TextViewCompat.setAutoSizeTextTypeUniformWithConfiguration(this, 12, 20, 1, TypedValue.COMPLEX_UNIT_SP)
+        contentDescription = if (current) "κράτα: $label" else "άλλαξε σε: $label"
+        background = GradientDrawable().apply {
+            cornerRadius = dp(16).toFloat()
+            if (current) {
+                setColor(State.IDLE.color)
+            } else {
+                setColor(0xFF2E3552.toInt())
+                setStroke(dp(1), 0x33FFFFFF)
+            }
+        }
+        isClickable = true
+        setOnTouchListener { v, e ->
+            when (e.actionMasked) {
+                MotionEvent.ACTION_DOWN ->
+                    v.animate().scaleX(0.94f).scaleY(0.94f).setStartDelay(0).setDuration(90).start()
+                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL ->
+                    v.animate().scaleX(1f).scaleY(1f).setStartDelay(0).setDuration(160).start()
+            }
+            false
+        }
+        setOnClickListener { onClick() }
     }
 
     /** [current]: what the field holds now, drawn in the bubble's colour with a tick. */
@@ -678,21 +738,17 @@ class OverlayService : Service() {
         setOnClickListener { onClick() }
     }
 
-    /** "1/3" before the chips when more than one word is unsure. */
-    private fun makeCounter(label: String) = TextView(this).apply {
-        text = label
-        setTextColor(0x99FFFFFF.toInt())
-        textSize = 13f
-        gravity = Gravity.CENTER
-        setPadding(dp(8), 0, dp(6), 0)
-        layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, chipHeight())
-    }
-
-    private fun fillChips(c: Choice) {
-        chips.removeAllViews()
-        if (c.spots.size > 1) chips.addView(makeCounter("${c.index + 1}/${c.spots.size}"))
-        c.spot.options.forEachIndexed { i, o ->
-            chips.addView(makeChip(o.text.ifEmpty { "(τίποτα)" }, current = i == 0) { onChoose(i) })
+    /** The panel for the current unsure spot: what was typed first, then at most two alternatives. */
+    private fun fillChoices(c: Choice) {
+        choiceCounter.text = if (c.spots.size > 1) "${c.index + 1}/${c.spots.size}" else ""
+        choiceRow.removeAllViews()
+        c.spot.options.take(3).forEachIndexed { i, o ->
+            choiceRow.addView(
+                makeOption(o.text.ifEmpty { "(τίποτα)" }, current = i == 0) { onChoose(i) },
+                LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f).apply {
+                    marginStart = dp(4); marginEnd = dp(4)
+                },
+            )
         }
     }
 
@@ -701,7 +757,7 @@ class OverlayService : Service() {
      * phone's own sentence when the LLM's was typed instead; where they differ is always asked.
      */
     private fun offerChoices(words: List<String>, typed: String, candidates: List<Candidate>, forced: List<String>?) {
-        val spots = WordChoices.find(words, candidates, forced = forced)
+        val spots = WordChoices.find(words, candidates, forced = forced, maxOptions = 3)
         Log.i(TAG, "choices: ${spots.size} spot(s)" + spots.joinToString("") { s ->
             " [" + s.options.joinToString(" | ") { "${it.text} ${(it.probability * 100).toInt()}%" } + "]"
         } + (if (forced != null) ", LLM differs" else "") + (if (docked) "" else ", keyboard closed"))
@@ -709,8 +765,8 @@ class OverlayService : Service() {
         val c = Choice(words, typed, spots)
         choice = c
         if (!docked) hiddenSince = SystemClock.uptimeMillis()
-        fillChips(c)
-        if (optionsShown) revealChips() else updateOptions()
+        fillChoices(c)
+        if (optionsShown) revealOptions() else updateOptions()
     }
 
     /** [i] 0 keeps what was typed; any other option rewrites the spot in the field. */
@@ -733,19 +789,19 @@ class OverlayService : Service() {
             c.typed = text
         }
         c.index++
-        if (c.index < c.spots.size) swapChips(c) else dismissChoice()
+        if (c.index < c.spots.size) swapOptions(c) else dismissChoice()
     }
 
-    /** The next unsure word: the old chips slide out to the left, the new ones in from the right. */
-    private fun swapChips(c: Choice) {
-        // the outgoing chips still belong to the previous spot; a second tap must not land on them
-        for (i in 0 until chips.childCount) chips.getChildAt(i).isEnabled = false
-        chips.animate().alpha(0f).translationX(-dp(24).toFloat())
+    /** The next unsure word: the old options slide out to the left, the new ones rise in. */
+    private fun swapOptions(c: Choice) {
+        // the outgoing options still belong to the previous spot; a second tap must not land on them
+        for (i in 0 until choiceRow.childCount) choiceRow.getChildAt(i).isEnabled = false
+        choiceRow.animate().alpha(0f).translationX(-dp(24).toFloat())
             .setStartDelay(0).setDuration(150).setInterpolator(ease)
             .withEndAction {
                 if (choice !== c) return@withEndAction
-                fillChips(c)
-                revealChips()
+                fillChoices(c)
+                revealOptions()
             }.start()
     }
 
@@ -754,42 +810,54 @@ class OverlayService : Service() {
         updateOptions()
     }
 
+    /**
+     * Opens the word-choice panel above the docked bar when there is a choice to make and the
+     * mic is idle, and closes it otherwise. The window grows upward before the panel fades in,
+     * and shrinks back only once it has faded out.
+     */
     private fun updateOptions() {
-        val show = docked && state == State.IDLE && choice != null
+        val show = docked && state == State.IDLE && choice != null && suggestions.isEmpty()
         if (show == optionsShown) return
         optionsShown = show
-        optionsAnim?.cancel()
-        if (!docked) {
-            // the bar is gone, nothing to animate back
-            optionsAnim = null
-            optionsProgress = 0f
-            return
-        }
-        optionsAnim = ValueAnimator.ofFloat(optionsProgress, if (show) 1f else 0f).apply {
-            duration = if (show) 420 else 280
-            interpolator = ease
-            addUpdateListener {
-                optionsProgress = it.animatedValue as Float
-                if (docked) shapeBar()
+        choicePanel.animate().cancel()
+        when {
+            show -> {
+                choiceExtra = choicePanelHeight() + panelGap()
+                shapeBar()
+                choicePanel.visibility = View.VISIBLE
+                choicePanel.alpha = 0f
+                choicePanel.translationY = dp(16).toFloat()
+                choicePanel.animate().alpha(1f).translationY(0f)
+                    .setStartDelay(0).setDuration(260).setInterpolator(ease).start()
+                revealOptions()
             }
-            start()
+            !docked -> {
+                // the bar is gone, nothing to animate back
+                choicePanel.visibility = View.GONE
+                choiceExtra = 0
+            }
+            else -> choicePanel.animate().alpha(0f).translationY(dp(12).toFloat())
+                .setStartDelay(0).setDuration(200).setInterpolator(ease)
+                .withEndAction {
+                    if (optionsShown) return@withEndAction
+                    choicePanel.visibility = View.GONE
+                    choiceExtra = 0
+                    if (docked) shapeBar()
+                }.start()
         }
-        if (show) revealChips()
     }
 
-    private fun revealChips() {
-        strip.scrollTo(0, 0)
-        chips.animate().cancel()
-        chips.alpha = 1f
-        chips.translationX = 0f
-        for (i in 0 until chips.childCount) {
-            val c = chips.getChildAt(i)
-            c.animate().cancel()
-            c.alpha = 0f
-            c.translationX = dp(28).toFloat()
-            c.scaleX = 0.9f; c.scaleY = 0.9f
-            c.animate().alpha(1f).translationX(0f).scaleX(1f).scaleY(1f)
-                .setStartDelay(120L + i * 50L).setDuration(340).setInterpolator(ease).start()
+    private fun revealOptions() {
+        choiceRow.animate().cancel()
+        choiceRow.alpha = 1f
+        choiceRow.translationX = 0f
+        for (i in 0 until choiceRow.childCount) {
+            val v = choiceRow.getChildAt(i)
+            v.animate().cancel()
+            v.alpha = 0f
+            v.translationY = dp(10).toFloat()
+            v.animate().alpha(1f).translationY(0f)
+                .setStartDelay(80L + i * 50L).setDuration(260).setInterpolator(ease).start()
         }
     }
 
@@ -1366,7 +1434,7 @@ class OverlayService : Service() {
         /** The running bubble, for push-to-talk from the accessibility service. */
         @Volatile var instance: OverlayService? = null
         /** How long a volume key must be held before push-to-talk starts listening. */
-        private const val PTT_HOLD_MS = 1_500L
+        private const val PTT_HOLD_MS = 1_000L
         /** Less audio than this after the vibration is not a dictation. */
         private const val PTT_MIN_AUDIO_MS = 500L
     }
