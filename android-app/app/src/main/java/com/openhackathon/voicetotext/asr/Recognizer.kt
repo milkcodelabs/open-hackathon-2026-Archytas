@@ -22,18 +22,23 @@ import kotlinx.coroutines.flow.asStateFlow
  * Process-wide owner of the acoustic model, shared by the bubble and the control panel.
  *
  * Layer 1 is Meta Omnilingual CTC 300M, restricted to the Greek columns inside the graph
- * (WER 0.139 on FLEURS with the LM), or the speaker's own fine-tune of it (omni.personal.*).
+ * (WER 0.139 on FLEURS with the LM), or a speaker's own fine-tune of it (omni.personal[.<name>].*;
+ * several can sit on the phone, one is chosen).
  */
 object Recognizer {
     private const val TAG = "Recognizer"
     private const val PREFS = "settings"
     private const val KEY_LM = "use_lm"
     private const val KEY_NEURAL = "use_neural_lm"
-    private const val KEY_PERSONAL = "use_personal_model"
+    /** Before several personal models: a switch for omni.personal.*. Read once, to migrate. */
+    private const val KEY_PERSONAL_OLD = "use_personal_model"
+    private const val KEY_PERSONAL = "personal_model"
+    private const val DEFAULT_PERSONAL = "omni.personal"
 
     @Volatile private var ctc: CtcModel? = null
-    /** Whether [ctc] is the speaker's own fine-tuned model rather than the downloaded one. */
-    @Volatile private var ctcPersonal: Boolean = false
+    /** Which personal model [ctc] holds ("" = the general one) and its name for the screen. */
+    @Volatile private var loadedKey: String = ""
+    @Volatile private var loadedTitle: String? = null
     @Volatile private var lm: NgramLm? = null
     @Volatile private var beam: BeamSearch? = null
     /** Layer 2b; null when el_homophones.bin is missing (then 2a alone runs). */
@@ -61,8 +66,8 @@ object Recognizer {
     /** Layer 2c, the neural LM that re-ranks the best sentences with context. */
     @Volatile var useNeuralLm: Boolean = true
         private set
-    /** Use the speaker's own acoustic model (omni.personal.*) when it is on the phone. */
-    @Volatile var usePersonal: Boolean = true
+    /** The chosen personal model's key (its file stem, e.g. omni.personal.nikol); "" = general. */
+    @Volatile var personalKey: String = DEFAULT_PERSONAL
         private set
     @Volatile var speakerId: String = "default"
     @Volatile var lastError: String? = null
@@ -75,44 +80,61 @@ object Recognizer {
         renameOldFiles(ctx)
         useLanguageModel = p.getBoolean(KEY_LM, true)
         useNeuralLm = p.getBoolean(KEY_NEURAL, true)
-        usePersonal = p.getBoolean(KEY_PERSONAL, true)
+        personalKey = p.getString(KEY_PERSONAL, null)
+            ?: if (p.getBoolean(KEY_PERSONAL_OLD, true)) DEFAULT_PERSONAL else ""
     }
 
-    // ------------------------------------------------------------------ personal model
+    // ------------------------------------------------------------------ personal models
     //
-    // A speaker's fine-tuned Omnilingual lives next to the downloaded one
-    // under its own names. ModelDownloader never touches these files, so the two cannot be
-    // mixed: the personal model is used only when BOTH its graph and its labels are present
-    // (its labels may list the letters in a different order than the base model's).
+    // A speaker's fine-tuned Omnilingual lives next to the downloaded one under its own names:
+    // omni.personal.onnx (the one ModelDownloader can fetch) and any omni.personal.<name>.onnx
+    // copied onto the phone, each with <stem>.labels.json and optionally <stem>.json. A model
+    // counts only when BOTH its graph and its labels are present (its labels may list the
+    // letters in a different order than the base model's). The screen offers every one found.
 
-    fun personalFile(ctx: Context): File = File(filesRoot(ctx), "omni.personal.onnx")
-    fun personalLabelsFile(ctx: Context): File = File(filesRoot(ctx), "omni.personal.labels.json")
-    /** Optional: {"speaker": ..., "base": ..., "trained": ..., "note": ...} for the screen. */
-    fun personalMetaFile(ctx: Context): File = File(filesRoot(ctx), "omni.personal.json")
+    /** One personal model on the phone. [key] is its file stem. */
+    class PersonalModel(val key: String, val model: File, val labels: File, val meta: File) {
+        private val json by lazy { runCatching { org.json.JSONObject(meta.readText()) }.getOrNull() }
+        /** Short name for a button: the "speaker" of <stem>.json up to " (", else the file name. */
+        val title: String get() = json?.optString("speaker")?.substringBefore(" (")?.takeIf { it.isNotBlank() }
+            ?: key.removePrefix(DEFAULT_PERSONAL).removePrefix(".").ifEmpty { "προσωπικό" }
+        val sizeMb: Long get() = model.length() / 1_000_000
+        /** One line for the screen from <stem>.json: speaker, base, trained, note. */
+        val info: String get() = json?.let { j ->
+            listOf("speaker", "base", "trained", "note").mapNotNull { k -> j.optString(k).takeIf { it.isNotBlank() } }
+                .joinToString("  ·  ")
+        } ?: ""
+    }
 
-    fun personalPresent(ctx: Context): Boolean = personalFile(ctx).exists() && personalLabelsFile(ctx).exists()
-    fun personalSizeMb(ctx: Context): Long = personalFile(ctx).length() / 1_000_000
+    private val PERSONAL_FILE = Regex("""omni\.personal(\.[A-Za-z0-9_-]+)?\.onnx""")
 
-    private fun wantPersonal(ctx: Context): Boolean = usePersonal && personalPresent(ctx)
+    /** Every personal model on the phone, the downloadable omni.personal.* first. */
+    fun personalModels(ctx: Context): List<PersonalModel> {
+        val root = filesRoot(ctx)
+        return (root.listFiles() ?: emptyArray()).mapNotNull { f ->
+            val m = PERSONAL_FILE.matchEntire(f.name) ?: return@mapNotNull null
+            val stem = DEFAULT_PERSONAL + m.groupValues[1]
+            val labels = File(root, "$stem.labels.json")
+            if (labels.exists()) PersonalModel(stem, f, labels, File(root, "$stem.json")) else null
+        }.sortedBy { if (it.key == DEFAULT_PERSONAL) "" else it.key }
+    }
 
-    /** One line about the personal model for the screen, from omni.personal.json if present. */
-    fun personalInfo(ctx: Context): String = runCatching {
-        val j = org.json.JSONObject(personalMetaFile(ctx).readText())
-        listOf("speaker", "base", "trained", "note").mapNotNull { k -> j.optString(k).takeIf { it.isNotBlank() } }
-            .joinToString("  ·  ")
-    }.getOrDefault("")
+    /** The chosen personal model, or null for the general one (also when the chosen one is gone). */
+    fun selectedPersonal(ctx: Context): PersonalModel? =
+        if (personalKey.isEmpty()) null else personalModels(ctx).find { it.key == personalKey }
 
-    fun setUsePersonal(ctx: Context, on: Boolean) {
-        usePersonal = on
-        prefs(ctx).edit().putBoolean(KEY_PERSONAL, on).apply()
+    /** [key]: a [PersonalModel.key], or "" for the general model. */
+    fun setPersonal(ctx: Context, key: String) {
+        personalKey = key
+        prefs(ctx).edit().putString(KEY_PERSONAL, key).apply()
         dropAcoustic()
-        Log.i(TAG, "personal model = $on")
+        Log.i(TAG, "personal model = ${key.ifEmpty { "none" }}")
     }
 
     /** Forget the loaded acoustic model; the next recognition loads the right one. */
     @Synchronized
     fun dropAcoustic() {
-        ctc?.close(); ctc = null; ctcPersonal = false; beam = null; speller = null
+        ctc?.close(); ctc = null; loadedKey = ""; loadedTitle = null; beam = null; speller = null
     }
 
     fun neuralPresent(ctx: Context): Boolean = NeuralRescorer.present(filesRoot(ctx))
@@ -169,11 +191,10 @@ object Recognizer {
 
     fun omniPresent(ctx: Context): Boolean = omniFile(ctx).exists() && omniLabelsFile(ctx).exists()
 
-    /** Whether layer 1 can run: the downloaded model or the personal one is there. */
-    fun filesPresent(ctx: Context): Boolean = omniPresent(ctx) || wantPersonal(ctx)
+    /** Whether layer 1 can run: the downloaded model or the chosen personal one is there. */
+    fun filesPresent(ctx: Context): Boolean = omniPresent(ctx) || selectedPersonal(ctx) != null
 
-    fun sizeMb(ctx: Context): Long =
-        (if (wantPersonal(ctx)) personalFile(ctx) else omniFile(ctx)).length() / 1_000_000
+    fun sizeMb(ctx: Context): Long = (selectedPersonal(ctx)?.model ?: omniFile(ctx)).length() / 1_000_000
 
     val ready: Boolean get() = ctc != null
 
@@ -230,8 +251,8 @@ object Recognizer {
 
     @Synchronized
     fun load(ctx: Context): Boolean {
-        val personal = wantPersonal(ctx)
-        if (ready && ctcPersonal == personal) return true
+        val personal = selectedPersonal(ctx)
+        if (ready && loadedKey == (personal?.key ?: "")) return true
         if (!filesPresent(ctx)) {
             lastError = "Λείπει το omni.onnx στο ${filesRoot(ctx).absolutePath}"
             return false
@@ -239,10 +260,11 @@ object Recognizer {
         val t0 = System.currentTimeMillis()
         return try {
             ctc?.close(); ctc = null; beam = null; speller = null
-            val m = if (personal) CtcModel(personalFile(ctx), personalLabelsFile(ctx))
+            val m = if (personal != null) CtcModel(personal.model, personal.labels)
                     else CtcModel(omniFile(ctx), omniLabelsFile(ctx))
             ctc = m
-            ctcPersonal = personal
+            loadedKey = personal?.key ?: ""
+            loadedTitle = personal?.title
             if (useLanguageModel && lmPresent(ctx)) {
                 val n = lm ?: NgramLm.load(lmFile(ctx)).also { lm = it }
                 buildLayer2(ctx, m.labels, n)
@@ -337,5 +359,6 @@ object Recognizer {
 
     /** The model's name for the screen; with no context, it describes the loaded model. */
     fun label(ctx: Context?): String =
-        if (if (ctx != null) wantPersonal(ctx) else ctcPersonal) "Omnilingual (προσωπικό)" else "Omnilingual"
+        (if (ctx != null) selectedPersonal(ctx)?.title else loadedTitle)
+            ?.let { "Omnilingual (προσωπικό: $it)" } ?: "Omnilingual"
 }
