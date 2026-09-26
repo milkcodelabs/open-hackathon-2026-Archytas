@@ -105,6 +105,11 @@ object TrainingStore {
         if (f.length() > 44) i to (f.length() - 44) / 2f / AudioRecorder.SAMPLE_RATE else null
     }.toMap()
 
+    /** Deletes every take and the metadata. */
+    fun clear(ctx: Context) {
+        dir(ctx).listFiles()?.forEach { it.delete() }
+    }
+
     fun save(ctx: Context, i: Int, pcm: FloatArray) {
         writeWav(wav(ctx, i), pcm)
         writeMetadata(ctx)
@@ -260,6 +265,14 @@ fun TrainingScreen(micGranted: Boolean, micBusy: Boolean, askMic: () -> Unit, on
         AlertDialog(
             onDismissRequest = { showPlan = false },
             confirmButton = { TextButton(onClick = { showPlan = false }) { Text("Εντάξει", fontSize = 16.sp) } },
+            dismissButton = {
+                TextButton(onClick = {
+                    player?.release(); player = null
+                    TrainingStore.clear(ctx)
+                    done.clear(); idx = 0; note = "Οι ηχογραφήσεις διαγράφηκαν."
+                    showPlan = false
+                }) { Text("Διαγραφή ηχογραφήσεων", fontSize = 16.sp, color = Listening) }
+            },
             title = { Text("Πώς γίνεται η εκπαίδευση") },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
