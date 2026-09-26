@@ -99,6 +99,12 @@ data class ScreenState(
     val neuralPresent: Boolean,
     val neuralOn: Boolean,
     val neuralMb: Long,
+    val personalPresent: Boolean,
+    val personalOn: Boolean,
+    val personalMb: Long,
+    val personalInfo: String,
+    /** MB of the personal model still to download (0 when it is complete on the phone). */
+    val personalMissingMb: Long,
     val llmOn: Boolean,
     val llmProvider: LlmCorrector.Provider,
     /** Providers whose API key was built into the app. */
@@ -128,11 +134,13 @@ interface MainActions {
     fun selectEngine(e: Recognizer.Engine)
     fun setLanguageModel(on: Boolean)
     fun setNeuralLm(on: Boolean)
+    fun setPersonal(on: Boolean)
     fun setLlm(on: Boolean)
     fun selectLlmProvider(p: LlmCorrector.Provider)
     fun runCheck()
     fun download()
     fun cancelDownload()
+    fun downloadPersonal()
 }
 
 @Composable
@@ -392,6 +400,21 @@ private fun ModelsCard(state: ScreenState, actions: MainActions) {
                 }
             }
         }
+        Spacer(Modifier.height(14.dp))
+        StatusRow(
+            ok = state.personalMissingMb == 0L,
+            text = if (state.personalMissingMb == 0L) "Προσωπικό μοντέλο στο κινητό (${state.personalMb} MB)"
+            else "Προσωπικό μοντέλο: προαιρετικό",
+        )
+        if (state.personalMissingMb > 0 && !p.running) {
+            Spacer(Modifier.height(8.dp))
+            OutlinedButton(
+                onClick = { actions.downloadPersonal() },
+                modifier = Modifier.fillMaxWidth().height(52.dp),
+            ) { Text("Λήψη προσωπικού μοντέλου (${state.personalMissingMb} MB)", fontSize = 16.sp) }
+            Text("Εκπαιδευμένο στη φωνή του ομιλητή. Μετά τη λήψη ανοίγει και κλείνει από το «Προσωπικό μοντέλο».",
+                fontSize = 13.sp, color = OnMuted, modifier = Modifier.padding(top = 4.dp))
+        }
         Spacer(Modifier.height(8.dp))
         OutlinedButton(onClick = { actions.importFiles() }, modifier = Modifier.fillMaxWidth().height(52.dp)) {
             Text("Εισαγωγή αρχείων από το κινητό", fontSize = 16.sp)
@@ -440,6 +463,21 @@ private fun EngineCard(state: ScreenState, actions: MainActions) {
             },
             fontSize = 14.sp, color = OnMuted, modifier = Modifier.padding(top = 8.dp),
         )
+        if (state.engine == Recognizer.Engine.OMNI && state.personalPresent) {
+            Spacer(Modifier.height(12.dp))
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text("Προσωπικό μοντέλο", fontSize = 16.sp, color = OnBg)
+                    Text(
+                        (if (state.personalOn) "Ενεργό, ${state.personalMb} MB: εκπαιδευμένο στη φωνή του ομιλητή."
+                        else "Ανενεργό: χρησιμοποιείται το γενικό Omnilingual.") +
+                            (if (state.personalInfo.isNotBlank()) "\n" + state.personalInfo else ""),
+                        fontSize = 14.sp, color = OnMuted,
+                    )
+                }
+                Switch(checked = state.personalOn, onCheckedChange = { actions.setPersonal(it) })
+            }
+        }
         run {
             Spacer(Modifier.height(12.dp))
             Row(verticalAlignment = Alignment.CenterVertically) {

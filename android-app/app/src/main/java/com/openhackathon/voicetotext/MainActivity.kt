@@ -67,6 +67,7 @@ class MainActivity : ComponentActivity() {
                 val done = withContext(Dispatchers.IO) { uris.mapNotNull { copyIn(it) } }
                 busy = false
                 Recognizer.releaseUnused()
+                if (done.any { it.startsWith("omni.personal") }) { Recognizer.dropAcoustic(); reloadBubble() }
                 if (done.any { it in LAYER2_FILES }) withContext(Dispatchers.Default) { Recognizer.reloadLayer2(this@MainActivity) }
                 result = if (done.isEmpty()) "Δεν αντιγράφηκε τίποτα" else "Εισήχθησαν: " + done.joinToString(", ")
                 tick++
@@ -138,6 +139,11 @@ class MainActivity : ComponentActivity() {
             neuralPresent = Recognizer.neuralPresent(this),
             neuralOn = Recognizer.useNeuralLm,
             neuralMb = Recognizer.neuralSizeMb(this),
+            personalPresent = Recognizer.personalPresent(this),
+            personalOn = Recognizer.usePersonal,
+            personalMb = Recognizer.personalSizeMb(this),
+            personalInfo = Recognizer.personalInfo(this),
+            personalMissingMb = ModelDownloader.missingPersonal(this).sumOf { it.bytes } / 1_000_000,
             llmOn = LlmCorrector.enabled,
             llmProvider = LlmCorrector.provider,
             llmKeys = LlmCorrector.Provider.entries.filter { LlmCorrector.hasKey(it) }.toSet(),
@@ -218,11 +224,27 @@ class MainActivity : ComponentActivity() {
             tick++
         }
 
+        override fun setPersonal(on: Boolean) {
+            if (on == Recognizer.usePersonal) return
+            Recognizer.setUsePersonal(this@MainActivity, on)
+            reloadBubble()
+            tick++
+        }
+
         override fun runCheck() = this@MainActivity.runCheck()
 
         override fun download() = startDownload()
 
         override fun cancelDownload() { ModelDownloader.cancel(); tick++ }
+
+        override fun downloadPersonal() {
+            ModelDownloader.startPersonal(this@MainActivity) { ok ->
+                lifecycleScope.launch {
+                    if (ok) { Recognizer.dropAcoustic(); reloadBubble() }
+                    tick++
+                }
+            }
+        }
     }
 
     private fun reloadBubble() {

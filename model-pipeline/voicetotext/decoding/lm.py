@@ -1,13 +1,16 @@
-"""KenLM n-gram language model: corpus preparation, vocabulary cap, lmplz, binary.
+"""KenLM n-gram language model: corpus preparation, vocabulary cap, lmplz, binary, mixing.
 
 Pipeline (documented in README.md):
   1. prepare_corpus: raw sentences -> subtitle clean-up -> Latin sentences dropped, digits
      verbalized -> normalize() (the SAME function used for references) -> one sentence per
-     line, capped length.
+     line, capped length. Sources: OpenSubtitles, Wikipedia, and everyday text dumps
+     (iter_text_corpus: web, forums, messages; any number of them, named "text...").
   2. build_vocab: top-N words by frequency (N = lm.vocab_size). lmplz maps the rest to <unk>.
   3. lmplz -o ORDER --prune ... --limit_vocab_file -> ARPA; build_binary trie -> .bin.
      The ARPA is what export_lm.py turns into the phone format; the binary is what the
      Python beam decoder (pyctcdecode) loads for evaluation and tuning.
+  4. mix_corpora: a speaker's own text mixed into the general text by repetition
+     (count-level interpolation) before rebuilding.
 """
 
 from __future__ import annotations
@@ -65,6 +68,52 @@ def iter_wikipedia_parquet(path: Path, max_articles: int | None = None) -> Itera
                     sent = sent.strip()
                     if sent:
                         yield sent
+
+
+def iter_text_corpus(path: Path) -> Iterator[str]:
+    """Everyday text (web, forums, comments, messages): the register people actually type.
+
+    Accepts ``.txt``/``.txt.gz`` (one paragraph or document per line), ``.jsonl``/``.jsonl.gz``
+    with a ``"text"`` field (HPLT, CulturaX, OSCAR style dumps) and ``.parquet`` with a
+    ``text`` column. Paragraphs are split into sentences; cleaning, digit verbalization and
+    the length cap happen in ``clean_sentences`` like for every other source.
+    """
+    import json
+
+    name = str(path)
+
+    def paragraphs() -> Iterator[str]:
+        if name.endswith(".parquet"):
+            import pyarrow.parquet as pq
+
+            for batch in pq.ParquetFile(path).iter_batches(batch_size=256, columns=["text"]):
+                for text in batch.column("text").to_pylist():
+                    yield from (text or "").split("\n")
+            return
+        opener = gzip.open if name.endswith(".gz") else open
+        is_json = ".jsonl" in name or ".json." in name or name.endswith(".json")
+        try:
+            with opener(path, "rt", encoding="utf-8", errors="ignore") as f:  # type: ignore[operator]
+                for line in f:
+                    if is_json:
+                        try:
+                            text = json.loads(line).get("text", "")
+                        except (ValueError, AttributeError):
+                            continue
+                        yield from text.split("\n")
+                    else:
+                        yield line
+        except EOFError:
+            log.warning("%s: truncated gzip stream, using what was readable", path)
+
+    for para in paragraphs():
+        para = para.strip()
+        if len(para) < 20:
+            continue
+        for sent in _SENT_SPLIT.split(para):
+            sent = sent.strip()
+            if sent:
+                yield sent
 
 
 def clean_subtitle_line(line: str) -> str:
@@ -128,9 +177,15 @@ def prepare_corpus(cfg: Config, norm: Normalizer, sources: dict[str, Path], out_
     counts: dict[str, dict] = {}
     with open(out_path, "w", encoding="utf-8") as out:
         for name, path in sources.items():
-            raw = iter_wikipedia_parquet(path, wiki_max_articles) if name == "wikipedia" else iter_opensubtitles(path)
+            if name == "wikipedia":
+                raw = iter_wikipedia_parquet(path, wiki_max_articles)
+            elif name.startswith("text"):
+                raw = iter_text_corpus(path)
+            else:
+                raw = iter_opensubtitles(path)
             n = 0
-            cap = cfg.lm.max_sentences.get(name)
+            # a "text..." source takes its own cap if set, else the shared "text" one
+            cap = cfg.lm.max_sentences.get(name, cfg.lm.max_sentences.get("text") if name.startswith("text") else None)
             st = CleanStats()
             for sent in clean_sentences(raw, norm, digits=cfg.lm.digits, drop_latin=cfg.lm.drop_latin_sentences,
                                         max_words=cfg.lm.max_words_per_sentence, subtitles=(name == "opensubtitles"), stats=st):
@@ -205,6 +260,20 @@ def oov_rate(vocab: set[str], sentences: Iterable[str]) -> float:
             total += 1
             oov += w not in vocab
     return oov / total if total else 0.0
+
+
+def mix_corpora(general_txt: Path, personal_txt: Path, out_txt: Path, personal_weight: int) -> Path:
+    """Count-level interpolation: the personal sentences are repeated ``personal_weight`` times
+    after the general text, and the LM is rebuilt from the result. A speaker's own phrases then
+    carry more weight without a separate model at decoding time."""
+    with open(out_txt, "w", encoding="utf-8") as out:
+        with open(general_txt, encoding="utf-8") as f:
+            for line in f:
+                out.write(line)
+        personal = [l for l in open(personal_txt, encoding="utf-8") if l.strip()]
+        for _ in range(personal_weight):
+            out.writelines(personal)
+    return out_txt
 
 
 def build_general_lm(cfg: Config, norm: Normalizer, sources: dict[str, Path], name: str = "general_el", wiki_max_articles: int | None = None) -> dict:
