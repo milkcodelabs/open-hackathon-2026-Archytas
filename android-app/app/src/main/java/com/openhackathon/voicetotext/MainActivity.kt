@@ -9,12 +9,14 @@ import android.os.Bundle
 import android.provider.OpenableColumns
 import android.provider.Settings
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.lifecycleScope
@@ -28,6 +30,7 @@ import com.openhackathon.voicetotext.ui.MainActions
 import com.openhackathon.voicetotext.ui.MainScreen
 import com.openhackathon.voicetotext.ui.PersonalChoice
 import com.openhackathon.voicetotext.ui.ScreenState
+import com.openhackathon.voicetotext.ui.UserScreen
 import com.openhackathon.voicetotext.ui.theme.VoicetotextTheme
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -36,9 +39,11 @@ import kotlinx.coroutines.withContext
 import java.io.File
 
 /**
- * Setup screen. The interface people actually use is the floating bubble
- * ([OverlayService]); this walks through the permissions, gets the models onto the phone,
- * shows or hides the bubble, and lets the microphone be tried inside the app.
+ * Setup screen. The interface people actually use is the floating bubble ([OverlayService]).
+ * Everyone sees [UserScreen]: the permissions, the models on first start, and the switch for
+ * the bubble. A long press on its title opens dev mode ([MainScreen]): every setting, the
+ * in-app microphone and the analysis. Dev mode is not remembered; the app always opens on
+ * the user screen.
  */
 class MainActivity : ComponentActivity() {
 
@@ -104,7 +109,13 @@ class MainActivity : ComponentActivity() {
 
         setContent {
             VoicetotextTheme {
-                MainScreen(state = screenState(), actions = actions)
+                var dev by rememberSaveable { mutableStateOf(false) }
+                if (dev) {
+                    BackHandler { dev = false }
+                    MainScreen(state = screenState(), actions = actions, onExit = { dev = false })
+                } else {
+                    UserScreen(state = screenState(), actions = actions, onDevMode = { dev = true })
+                }
             }
         }
     }

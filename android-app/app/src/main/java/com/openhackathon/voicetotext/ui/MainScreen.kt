@@ -143,8 +143,9 @@ interface MainActions {
     fun downloadPersonal()
 }
 
+/** Dev mode: every setting, the in-app microphone and the analysis of the last recognition. */
 @Composable
-fun MainScreen(state: ScreenState, actions: MainActions) {
+fun MainScreen(state: ScreenState, actions: MainActions, onExit: () -> Unit) {
     Column(
         modifier = Modifier
             .background(Bg)
@@ -153,6 +154,11 @@ fun MainScreen(state: ScreenState, actions: MainActions) {
             .padding(horizontal = 20.dp, vertical = 16.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
+        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+            Text("DEV MODE", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = Thinking,
+                letterSpacing = 1.sp, modifier = Modifier.weight(1f))
+            TextButton(onClick = onExit) { Text("Έξοδος", fontSize = 15.sp) }
+        }
         Hero(state, actions)
         CandidatesCard(state)
         ModelsCard(state, actions)
