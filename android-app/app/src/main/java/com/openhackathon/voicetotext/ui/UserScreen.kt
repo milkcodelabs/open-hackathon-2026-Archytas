@@ -33,7 +33,6 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.dp
@@ -54,10 +53,11 @@ private const val MAX_FONT_SCALE = 1.15f
 
 /**
  * What everyone sees: one screen that fits without scrolling, also with a large system font
- * and display size. The permissions the floating button needs, the models on first start,
- * and the switch that shows the button. The steps take only the room left between the title
- * and the switch, so the switch is always on screen. Everything else (models, layer 2,
- * analysis, the in-app microphone) is dev mode, opened by a long press on the title.
+ * and display size. The permissions the floating button needs and the models on first start,
+ * centred, and at the bottom the switch that shows the button. The steps take only the room
+ * above the switch, so the switch is always on screen. Everything else (models, layer 2,
+ * analysis, the in-app microphone) is dev mode, opened by a long press anywhere on the screen
+ * outside the buttons.
  */
 @Composable
 fun UserScreen(state: ScreenState, actions: MainActions, onDevMode: () -> Unit) {
@@ -77,17 +77,10 @@ private fun UserContent(state: ScreenState, actions: MainActions, onDevMode: () 
             .fillMaxSize()
             .background(Bg)
             .safeDrawingPadding()
-            .padding(horizontal = 18.dp, vertical = 16.dp),
+            .pointerInput(Unit) { detectTapGestures(onLongPress = { onDevMode() }) }
+            .padding(start = 18.dp, end = 18.dp, top = 16.dp, bottom = 6.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
-        Text(
-            "Φωνή σε κείμενο", fontSize = 28.sp, fontWeight = FontWeight.Bold, color = OnBg, maxLines = 1,
-            modifier = Modifier.pointerInput(Unit) { detectTapGestures(onLongPress = { onDevMode() }) },
-        )
-        Text(
-            "Μίλα και γράφεται, σε όποια εφαρμογή.",
-            fontSize = 16.sp, color = OnMuted, textAlign = TextAlign.Center, modifier = Modifier.padding(top = 4.dp),
-        )
         Column(
             modifier = Modifier.weight(1f).fillMaxWidth().padding(vertical = 12.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp, Alignment.CenterVertically),
@@ -125,14 +118,6 @@ private fun UserContent(state: ScreenState, actions: MainActions, onDevMode: () 
         ) {
             Text(if (on) "Απενεργοποίηση" else "Ενεργοποίηση", fontSize = 20.sp, fontWeight = FontWeight.SemiBold, maxLines = 1)
         }
-        Text(
-            when {
-                on -> "Σε όποια εφαρμογή, πάτα το μπλε κουμπί και μίλα."
-                ready -> "Βάζει ένα κουμπί πάνω από κάθε εφαρμογή."
-                else -> "Ολοκλήρωσε πρώτα τα βήματα."
-            },
-            fontSize = 14.sp, color = OnMuted, textAlign = TextAlign.Center, modifier = Modifier.padding(top = 8.dp),
-        )
     }
 }
 
