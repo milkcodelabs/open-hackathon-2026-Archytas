@@ -53,7 +53,7 @@ class TypingAccessibilityService : AccessibilityService() {
         val bubble = OverlayService.instance ?: return false
         return when (event.action) {
             KeyEvent.ACTION_DOWN -> bubble.pushToTalk(down = true, repeat = event.repeatCount > 0)
-            KeyEvent.ACTION_UP -> bubble.pushToTalk(down = false, repeat = false)
+            KeyEvent.ACTION_UP -> bubble.pushToTalk(down = false, repeat = false, heldMs = event.eventTime - event.downTime)
             else -> false
         }
     }

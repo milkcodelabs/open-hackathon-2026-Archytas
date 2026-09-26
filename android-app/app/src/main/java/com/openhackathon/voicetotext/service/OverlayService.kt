@@ -1146,34 +1146,37 @@ class OverlayService : Service() {
         }
     }
 
-    /** When push-to-talk started the current recording (elapsed ms); 0 when it did not. */
-    private var pttSince = 0L
+    /** Whether push-to-talk started the current recording. */
+    private var pttActive = false
 
     /**
      * Push-to-talk with the volume keys, from [TypingAccessibilityService.onKeyEvent] (main
-     * thread): key down starts listening as a tap on the bubble does, key up recognises. A press
-     * shorter than [PTT_MIN_MS] is dropped. While the bubble is loading or failed the keys stay
-     * volume keys. Returns whether the key was used (then the volume does not change).
+     * thread): key down starts listening as a tap on the bubble does, key up recognises.
+     * [heldMs] is the key's own down-to-up time (not when the events reached us). A press
+     * shorter than [PTT_MIN_MS], or one that captured less than that much audio, is dropped
+     * without typing anything. While the bubble is loading or failed the keys stay volume keys.
+     * Returns whether the key was used (then the volume does not change).
      */
-    fun pushToTalk(down: Boolean, repeat: Boolean): Boolean {
+    fun pushToTalk(down: Boolean, repeat: Boolean, heldMs: Long = 0L): Boolean {
         if (state == State.LOADING || state == State.ERROR) return false
         if (repeat) return true
         if (down) {
             if (state == State.IDLE) {
                 onTap()
-                if (state == State.LISTENING) pttSince = SystemClock.elapsedRealtime()
+                pttActive = state == State.LISTENING
+                Log.i(TAG, "push-to-talk down, listening=$pttActive")
             }
-        } else if (pttSince != 0L) {
-            val held = SystemClock.elapsedRealtime() - pttSince
-            pttSince = 0L
+        } else if (pttActive) {
+            pttActive = false
             if (state == State.LISTENING) {
-                if (held >= PTT_MIN_MS) onTap()
-                else {
-                    runCatching { recorder.stop() }
+                val pcm = runCatching { recorder.stop() }.getOrNull()
+                val audioMs = (pcm?.size ?: 0) * 1000L / AudioRecorder.SAMPLE_RATE
+                Log.i(TAG, "push-to-talk up: held $heldMs ms, audio $audioMs ms")
+                if (pcm == null || heldMs < PTT_MIN_MS || audioMs < PTT_MIN_MS) {
                     setState(State.IDLE)
                     updateOptions()
                     toast("Κράτα πατημένο το πλήκτρο έντασης όσο μιλάς.")
-                }
+                } else transcribe(pcm, "ptt")
             }
         }
         return true
@@ -1326,7 +1329,7 @@ class OverlayService : Service() {
         @Volatile var running = false
         /** The running bubble, for push-to-talk from the accessibility service. */
         @Volatile var instance: OverlayService? = null
-        /** A volume-key press shorter than this is not a dictation. */
-        private const val PTT_MIN_MS = 300L
+        /** A volume-key press (or its audio) shorter than this is not a dictation. */
+        private const val PTT_MIN_MS = 600L
     }
 }
