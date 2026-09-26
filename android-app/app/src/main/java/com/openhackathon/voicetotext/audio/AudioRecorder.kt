@@ -57,6 +57,23 @@ class AudioRecorder {
         private const val CHANNEL = AudioFormat.CHANNEL_IN_MONO
         private const val ENCODING = AudioFormat.ENCODING_PCM_FLOAT
 
+        /** 16 kHz mono 16-bit PCM WAV, the format the recognizer and the pipeline read. */
+        fun writeWav(file: File, pcm: FloatArray) {
+            val data = ByteArray(pcm.size * 2)
+            for (k in pcm.indices) {
+                val v = (pcm[k].coerceIn(-1f, 1f) * 32767).toInt()
+                data[2 * k] = (v and 0xFF).toByte(); data[2 * k + 1] = (v shr 8 and 0xFF).toByte()
+            }
+            RandomAccessFile(file, "rw").use { f ->
+                f.setLength(0)
+                fun i32(x: Int) = f.write(byteArrayOf(x.toByte(), (x shr 8).toByte(), (x shr 16).toByte(), (x shr 24).toByte()))
+                fun i16(x: Int) = f.write(byteArrayOf(x.toByte(), (x shr 8).toByte()))
+                f.write("RIFF".toByteArray()); i32(36 + data.size); f.write("WAVEfmt ".toByteArray())
+                i32(16); i16(1); i16(1); i32(SAMPLE_RATE); i32(SAMPLE_RATE * 2); i16(2); i16(16)
+                f.write("data".toByteArray()); i32(data.size); f.write(data)
+            }
+        }
+
         /**
          * Minimal WAV reader for files pushed with `adb push`: 16-bit or 32-bit float PCM,
          * mono or stereo, any rate. Resampling is linear, which is adequate for test clips.

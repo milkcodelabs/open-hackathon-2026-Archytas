@@ -35,6 +35,7 @@ import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.RadioButton
 import androidx.compose.material3.SegmentedButton
 import androidx.compose.material3.SegmentedButtonDefaults
 import androidx.compose.material3.SingleChoiceSegmentedButtonRow
@@ -53,6 +54,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.semantics.contentDescription
@@ -104,6 +106,8 @@ data class ScreenState(
     /** The personal models on the phone; [personalKey] is the one in use ("" = the general model). */
     val personals: List<PersonalChoice>,
     val personalKey: String,
+    /** The acoustic model in memory now, or null before the first recognition loads one. */
+    val loadedModel: String?,
     /** MB of the personal model still to download (0 when it is complete on the phone). */
     val personalMissingMb: Long,
     val llmOn: Boolean,
@@ -143,8 +147,9 @@ interface MainActions {
     fun downloadPersonal()
 }
 
+/** Dev mode: every setting, the in-app microphone and the analysis of the last recognition. */
 @Composable
-fun MainScreen(state: ScreenState, actions: MainActions) {
+fun MainScreen(state: ScreenState, actions: MainActions, onExit: () -> Unit) {
     Column(
         modifier = Modifier
             .background(Bg)
@@ -153,6 +158,12 @@ fun MainScreen(state: ScreenState, actions: MainActions) {
             .padding(horizontal = 20.dp, vertical = 16.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
+        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+            Text("DEV MODE", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = Thinking,
+                letterSpacing = 1.sp, modifier = Modifier.weight(1f))
+            TextButton(onClick = onExit) { Text("Έξοδος", fontSize = 15.sp) }
+        }
+        VoiceModelCard(state, actions)
         Hero(state, actions)
         CandidatesCard(state)
         ModelsCard(state, actions)
@@ -428,6 +439,42 @@ private fun remaining(seconds: Long): String = when {
     else -> String.format(Locale.US, "~%d ώρ. %d λεπ.", seconds / 3600, (seconds % 3600) / 60)
 }
 
+// ---------------------------------------------------------------------- voice model
+
+/**
+ * Which acoustic model the bubble (and the in-app microphone) listens with: the general one
+ * or a speaker's own, one row each, with the model in memory right now.
+ */
+@Composable
+private fun VoiceModelCard(state: ScreenState, actions: MainActions) {
+    Section("Μοντέλο φωνής") {
+        Text(
+            "Φορτωμένο τώρα: " + (state.loadedModel ?: "κανένα ακόμα, φορτώνει με την πρώτη χρήση"),
+            fontSize = 14.sp, color = OnMuted,
+        )
+        Spacer(Modifier.height(8.dp))
+        val options = listOf(PersonalChoice("", "Γενικό", state.modelMb, "Omnilingual, για κάθε ομιλητή")) + state.personals
+        options.forEach { o ->
+            val selected = state.personalKey == o.key
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(14.dp))
+                    .background(if (selected) SurfaceSoft else Color.Transparent)
+                    .clickable { actions.selectPersonal(o.key) }
+                    .padding(vertical = 8.dp, horizontal = 4.dp),
+            ) {
+                RadioButton(selected = selected, onClick = { actions.selectPersonal(o.key) })
+                Column(Modifier.weight(1f)) {
+                    Text(o.title, fontSize = 17.sp, fontWeight = FontWeight.SemiBold, color = OnBg)
+                    if (o.info.isNotBlank()) Text(o.info, fontSize = 13.sp, color = OnMuted)
+                }
+            }
+        }
+    }
+}
+
 // ---------------------------------------------------------------------- engine
 
 @Composable
@@ -441,28 +488,6 @@ private fun EngineCard(state: ScreenState, actions: MainActions) {
             "Meta Omnilingual CTC 300M, μόνο με τα ελληνικά γράμματα. Τρέχει όλο στο κινητό.",
             fontSize = 14.sp, color = OnMuted, modifier = Modifier.padding(top = 8.dp),
         )
-        if (state.personals.isNotEmpty()) {
-            Spacer(Modifier.height(12.dp))
-            Text("Προσωπικό μοντέλο", fontSize = 16.sp, color = OnBg)
-            Spacer(Modifier.height(6.dp))
-            val options = listOf(PersonalChoice("", "Γενικό", 0, "")) + state.personals
-            SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
-                options.forEachIndexed { i, o ->
-                    SegmentedButton(
-                        selected = state.personalKey == o.key,
-                        onClick = { actions.selectPersonal(o.key) },
-                        shape = SegmentedButtonDefaults.itemShape(i, options.size),
-                        modifier = Modifier.height(54.dp),
-                    ) { Text(o.title, fontSize = 14.sp, maxLines = 1) }
-                }
-            }
-            val sel = state.personals.find { it.key == state.personalKey }
-            Text(
-                if (sel == null) "Γενικό Omnilingual, για κάθε ομιλητή."
-                else "${sel.mb} MB, εκπαιδευμένο στη φωνή του ομιλητή." + (if (sel.info.isNotBlank()) "\n" + sel.info else ""),
-                fontSize = 14.sp, color = OnMuted, modifier = Modifier.padding(top = 6.dp),
-            )
-        }
         run {
             Spacer(Modifier.height(12.dp))
             Row(verticalAlignment = Alignment.CenterVertically) {

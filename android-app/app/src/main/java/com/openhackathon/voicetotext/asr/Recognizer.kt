@@ -189,6 +189,7 @@ object Recognizer {
     fun omniLabelsFile(ctx: Context): File = File(filesRoot(ctx), "omni.labels.json")
     fun testWav(ctx: Context): File = File(filesRoot(ctx), "test.wav")
 
+
     fun omniPresent(ctx: Context): Boolean = omniFile(ctx).exists() && omniLabelsFile(ctx).exists()
 
     /** Whether layer 1 can run: the downloaded model or the chosen personal one is there. */

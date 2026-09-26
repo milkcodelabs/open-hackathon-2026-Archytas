@@ -47,7 +47,11 @@ class BeamSearch(
     private val blank = labels.indexOfFirst { it == "[PAD]" || it == "<pad>" }
     private val space = labels.indexOfFirst { it == "|" || it == " " }
 
-    /** Cost of a partial word no vocabulary entry starts with; mirrors unk_score_offset. */
+    /**
+     * pyctcdecode's unk_score_offset. A partial word no vocabulary entry starts with costs this
+     * much (natural log) while it is ranked, scaled by length/6 beyond 6 letters; a finished
+     * word the LM does not know gets it in log10, on top of P(<unk>), as KenLM scoring does there.
+     */
     private val deadEnd = -10f
 
     private val personal: TreeSet<String> = TreeSet(personalWords.filter { it.isNotBlank() })
@@ -150,7 +154,8 @@ class BeamSearch(
         if (partial.isEmpty()) return 0f
         if (n.hasPrefix(partial)) return 0f
         val p = personal.ceiling(partial)
-        return if (p != null && p.startsWith(partial)) 0f else deadEnd
+        if (p != null && p.startsWith(partial)) return 0f
+        return if (partial.length > 6) deadEnd * partial.length / 6f else deadEnd
     }
 
     fun isPersonal(word: String): Boolean = word in personal
@@ -171,6 +176,9 @@ class BeamSearch(
                 // (1 - lam) * 10^g + lam / |P|, in log10
                 g = log10((1.0 - personalWeight) * 10.0.pow(g.toDouble()) + 10.0.pow(personalLog10.toDouble())).toFloat()
                 s += hotwordWeight
+            } else if (!n.contains(word)) {
+                // an unknown word: P(<unk>) plus the offset, as pyctcdecode scores it
+                g += deadEnd
             }
             s += alpha * LOG10 * g
         }
