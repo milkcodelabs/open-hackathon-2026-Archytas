@@ -56,6 +56,7 @@ push them over USB:
 | `el_homophones.bin` | 10 MB | layer 2b, sound -> spellings index |
 | `test.wav` | 0.3 MB | optional, for the in-app test button |
 | `my_words.txt` | tiny | optional, the speaker's names and words, one per line |
+| `omni.personal.onnx` + `.labels.json` + `.json` | 356 MB | optional, the speaker's own layer 1 (downloaded only on request; `model-pipeline/personalization/`) |
 
 ```
 adb push omni.onnx /sdcard/Android/data/com.openhackathon.voicetotext/files/

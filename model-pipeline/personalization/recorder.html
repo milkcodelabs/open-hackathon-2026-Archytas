@@ -1,0 +1,457 @@
+<!doctype html>
+<html lang="el">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Ηχογραφήσεις προσαρμογής φωνής</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Commissioner:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+:root{
+  --paper:#EAEEEA; --panel:#F7F9F6; --ink:#1D2A31; --muted:#5E6E74; --line:#C9D2CD;
+  --rec:#C23A2E; --rec-soft:#F3D9D4; --guide:#236B63; --guide-soft:#D5E8E3; --ok:#3F7D3A;
+  --font:"Commissioner", "Noto Sans", "Segoe UI", Roboto, Arial, sans-serif;
+  box-sizing:border-box; padding-top:env(safe-area-inset-top,0px); padding-bottom:env(safe-area-inset-bottom,0px);
+}
+@media (prefers-color-scheme: dark){ :root:not([data-theme="light"]){
+  --paper:#141B1F; --panel:#1C252A; --ink:#E6ECE8; --muted:#94A3A8; --line:#2E3A40;
+  --rec:#E0574A; --rec-soft:#3A2220; --guide:#6CC2B5; --guide-soft:#1C3531; --ok:#7BC074; }}
+:root[data-theme="dark"]{
+  --paper:#141B1F; --panel:#1C252A; --ink:#E6ECE8; --muted:#94A3A8; --line:#2E3A40;
+  --rec:#E0574A; --rec-soft:#3A2220; --guide:#6CC2B5; --guide-soft:#1C3531; --ok:#7BC074; }
+*,*::before,*::after{box-sizing:inherit}
+html{height:100%;scroll-padding-top:env(safe-area-inset-top,0px)}
+body{margin:0;min-height:100%;background:var(--paper);color:var(--ink);font-family:var(--font);font-size:16px;line-height:1.5}
+.wrap{max-width:720px;margin:0 auto;padding:16px 18px 40px}
+header{display:flex;flex-wrap:wrap;align-items:center;gap:10px 16px;justify-content:space-between;margin-bottom:12px}
+h1{font-size:1.15rem;font-weight:700;margin:0;letter-spacing:-.01em}
+.sess{display:flex;align-items:center;gap:8px;font-size:.95rem;color:var(--muted)}
+select,button{font:inherit;color:inherit}
+select{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:6px 10px}
+nav{display:flex;gap:4px;border-bottom:1px solid var(--line);margin-bottom:18px;overflow-x:auto}
+nav button{background:none;border:0;padding:10px 12px;cursor:pointer;color:var(--muted);border-bottom:3px solid transparent;white-space:nowrap}
+nav button[aria-selected="true"]{color:var(--ink);border-bottom-color:var(--ink);font-weight:600}
+button:focus-visible,select:focus-visible{outline:3px solid var(--guide);outline-offset:2px}
+.seg{display:inline-flex;border:1px solid var(--line);border-radius:10px;overflow:hidden;margin-bottom:14px}
+.seg button{border:0;background:var(--panel);padding:8px 14px;cursor:pointer}
+.seg button[aria-pressed="true"]{background:var(--ink);color:var(--paper)}
+.progress{height:6px;background:var(--line);border-radius:3px;overflow:hidden;margin:4px 0 6px}
+.progress i{display:block;height:100%;background:var(--ok);width:0}
+.count{font-size:.9rem;color:var(--muted);display:flex;justify-content:space-between}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:22px 20px;margin:14px 0}
+.meta{display:flex;justify-content:space-between;font-size:.85rem;color:var(--muted);margin-bottom:10px}
+.text{font-size:clamp(1.5rem,5.5vw,2.1rem);font-weight:600;line-height:1.3;margin:0 0 18px}
+.guideLbl{font-size:.85rem;color:var(--muted);margin-bottom:4px}
+.guide{font-size:clamp(1.25rem,4.6vw,1.7rem);line-height:1.4;color:var(--ink)}
+.guide .ch{color:var(--guide);background:var(--guide-soft);border-radius:4px;padding:0 3px;font-weight:600}
+.status{margin-top:14px;font-size:.9rem;min-height:1.5em}
+.status.ok{color:var(--ok)} .status.warn{color:var(--rec)}
+.meter{height:10px;border-radius:5px;background:var(--line);overflow:hidden;margin:6px 0 18px}
+.meter i{display:block;height:100%;width:0;background:var(--guide);transition:width 60ms linear}
+.controls{display:grid;grid-template-columns:1fr auto 1fr;align-items:center;gap:12px}
+.ctl{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px 10px;cursor:pointer;min-height:48px}
+.ctl:disabled{opacity:.4;cursor:default}
+.rec{width:96px;height:96px;border-radius:50%;border:0;background:var(--rec);color:#fff;font-weight:700;font-size:.95rem;cursor:pointer;box-shadow:0 0 0 6px var(--rec-soft)}
+.rec.on{animation:pulse 1.2s ease-in-out infinite;background:var(--ink);color:var(--paper)}
+@keyframes pulse{50%{box-shadow:0 0 0 14px var(--rec-soft)}}
+@media (prefers-reduced-motion: reduce){.rec.on{animation:none}}
+.row2{display:flex;gap:10px;justify-content:center;margin-top:14px;flex-wrap:wrap}
+.hint{font-size:.85rem;color:var(--muted);text-align:center;margin-top:12px}
+.list{overflow-x:auto}
+table{width:100%;border-collapse:collapse;font-size:.92rem}
+td,th{text-align:left;padding:8px 6px;border-bottom:1px solid var(--line);vertical-align:top}
+th{color:var(--muted);font-weight:500}
+tr.jump{cursor:pointer} tr.jump:hover{background:var(--panel)}
+.dot{display:inline-block;width:10px;height:10px;border-radius:50%;background:var(--line)} .dot.d{background:var(--ok)}
+.rule{border-left:4px solid var(--guide);padding:4px 0 4px 14px;margin:18px 0}
+.rule h3{margin:0 0 4px;font-size:1.05rem}
+.rule p{margin:4px 0;color:var(--muted)}
+.ex{font-size:1.05rem} .ex b{color:var(--guide)}
+.big{background:var(--ink);color:var(--paper);border:0;border-radius:10px;padding:14px 18px;font-weight:600;cursor:pointer;min-height:48px}
+.danger{background:none;border:1px solid var(--rec);color:var(--rec);border-radius:10px;padding:10px 14px;cursor:pointer;margin-top:26px}
+.note{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px 14px;font-size:.92rem}
+[hidden]{display:none!important}
+</style>
+</head>
+<body>
+<div class="wrap">
+<header>
+  <h1>Ηχογραφήσεις προσαρμογής φωνής</h1>
+  <label class="sess">Συνεδρία
+    <select id="session"></select>
+  </label>
+</header>
+<nav role="tablist">
+  <button role="tab" data-tab="rec" aria-selected="true">Ηχογράφηση</button>
+  <button role="tab" data-tab="list" aria-selected="false">Λίστα</button>
+  <button role="tab" data-tab="prof" aria-selected="false">Πώς προφέρω</button>
+  <button role="tab" data-tab="exp" aria-selected="false">Εξαγωγή</button>
+</nav>
+
+<section id="tab-rec">
+  <div class="seg" role="group" aria-label="Σύνολο">
+    <button id="setMain" aria-pressed="true">Εκπαίδευση (380)</button>
+    <button id="setDemo" aria-pressed="false">Φράσεις demo (20)</button>
+  </div>
+  <div class="progress"><i id="prog"></i></div>
+  <div class="count"><span id="countTxt"></span><span id="sessTxt"></span></div>
+  <div class="card">
+    <div class="meta"><span id="itemNo"></span><span id="itemCat"></span></div>
+    <p class="text" id="text"></p>
+    <div class="guideLbl">Πες το έτσι</div>
+    <div class="guide" id="guide"></div>
+    <div class="status" id="status"></div>
+  </div>
+  <div class="meter" aria-hidden="true"><i id="meter"></i></div>
+  <div class="controls">
+    <button class="ctl" id="prev">Προηγούμενη</button>
+    <button class="rec" id="recBtn" aria-label="Ξεκίνα ηχογράφηση">Ηχογράφηση</button>
+    <button class="ctl" id="next">Επόμενη</button>
+  </div>
+  <div class="row2">
+    <button class="ctl" id="play" disabled>Άκου τη λήψη</button>
+    <button class="ctl" id="nextTodo">Πήγαινε στην επόμενη που λείπει</button>
+  </div>
+  <p class="hint">Πάτα μία φορά, πες την πρόταση, πάτα ξανά. Η λήψη αποθηκεύεται και περνάς αυτόματα στην επόμενη. Στον υπολογιστή: Space για ηχογράφηση, βελάκια για πλοήγηση.</p>
+</section>
+
+<section id="tab-list" hidden>
+  <div class="seg" role="group" aria-label="Φίλτρο">
+    <button id="fAll" aria-pressed="true">Όλες</button>
+    <button id="fTodo" aria-pressed="false">Χωρίς λήψη</button>
+  </div>
+  <div class="list"><table><thead><tr><th></th><th>#</th><th>Πρόταση</th><th>Συνεδρία</th></tr></thead><tbody id="tbody"></tbody></table></div>
+</section>
+
+<section id="tab-prof" hidden>
+  <p>Τρεις κανόνες, πάντα οι ίδιοι. Η σελίδα εφαρμόζει τους κανόνες αυτόματα και σου δείχνει κάτω από κάθε πρόταση πώς να την πεις. Οι λέξεις που αλλάζουν είναι χρωματισμένες.</p>
+  <div class="rule"><h3>Το ρ γίνεται λ</h3>
+    <p>Σε κάθε θέση της λέξης. Είναι από τις πιο συχνές δυσκολίες άρθρωσης στα ελληνικά.</p>
+    <p class="ex">ρούχα → <b>λούχα</b>, καφέ με ζάχαρη → καφέ με <b>ζάχαλη</b></p></div>
+  <div class="rule"><h3>Τα συμπλέγματα απλοποιούνται</h3>
+    <p>Το σ πριν από π, τ, κ, χ, φ, θ φεύγει. Το ρ ή λ μετά από π, τ, κ, β, γ, δ, φ, θ, χ φεύγει.</p>
+    <p class="ex">σπίτι → <b>πίτι</b>, δρόμος → <b>δόμος</b>, στροφή → <b>τοφή</b>, κλειδί → <b>κειδί</b></p></div>
+  <div class="rule"><h3>Το άτονο αρχικό φωνήεν χάνεται</h3>
+    <p>Μόνο όταν η λέξη ξεκινά με άτονο φωνήεν, ακολουθεί ένα σύμφωνο και μετά φωνήεν. Οι μικρές λέξεις (ο, η, να) δεν αλλάζουν.</p>
+    <p class="ex">απόψε → <b>πόψε</b>, εμένα → <b>μένα</b>, αγαπώ → <b>γαπώ</b></p></div>
+  <div class="note">
+    <p><strong>Πώς να μιλάς:</strong> με τη φυσική σου φωνή, λίγο πιο αργά από το κανονικό, χωρίς να υπερβάλλεις και χωρίς «θεατρινισμούς». Ο μόνος στόχος είναι να εφαρμόζεις τους τρεις κανόνες <em>πάντα</em>, με τον ίδιο τρόπο. Στο live demo μίλα ακριβώς όπως εδώ.</p>
+    <p><strong>Αν μπερδευτείς</strong>, απλώς ξαναπάτα ηχογράφηση: η νέα λήψη αντικαθιστά την παλιά.</p>
+    <p><strong>Κάθε μέρα άλλη συνεδρία.</strong> Διάλεξε τον αριθμό πάνω δεξιά πριν ξεκινήσεις. Περίπου 65 προτάσεις ανά συνεδρία, σε 6 συνεδρίες. Η συνεδρία 5 θα γίνει dev και η 6 test.</p>
+  </div>
+</section>
+
+<section id="tab-exp" hidden>
+  <div id="expStats" class="note"></div>
+  <p>Το αρχείο ZIP περιέχει όλες τις λήψεις ως WAV (16 kHz, mono, 16-bit) στον φάκελο <code>wav/</code> και ένα <code>metadata.csv</code> με το σωστό κείμενο, την προφορά, τη συνεδρία και τη διάρκεια κάθε λήψης.</p>
+  <button class="big" id="exportBtn">Κατέβασε το ZIP</button>
+  <div class="status" id="expStatus"></div>
+  <button class="danger" id="wipe">Διαγραφή όλων των λήψεων από αυτή τη συσκευή</button>
+</section>
+</div>
+<script>
+const NEEDS = [
+"Θέλω λίγο νερό, σε παρακαλώ.","Μπορείς να έρθεις λίγο εδώ;","Πεινάω, τι έχουμε για φαγητό;","Είμαι κουρασμένος και θέλω να ξαπλώσω.","Πάρε με τηλέφωνο όταν μπορέσεις.",
+"Θα αργήσω λίγο, μην ανησυχείς.","Έφτασα σπίτι, όλα καλά.","Μπορείς να ανοίξεις το παράθυρο;","Κάνει κρύο, κλείσε την πόρτα.","Χρειάζομαι βοήθεια με το κινητό.",
+"Πού είναι τα κλειδιά μου;","Θέλω να πάω στην τουαλέτα.","Δεν νιώθω πολύ καλά σήμερα.","Πονάει το κεφάλι μου.","Μπορείς να μου φέρεις τα γυαλιά μου;",
+"Τι ώρα είναι τώρα;","Θα φάμε μαζί το βράδυ;","Σ' αγαπώ πολύ.","Ευχαριστώ για όλα.","Καληνύχτα, τα λέμε αύριο.",
+"Καλημέρα, πώς κοιμήθηκες;","Θέλω έναν καφέ με λίγη ζάχαρη.","Άναψε το φως, σε παρακαλώ.","Κλείσε την τηλεόραση.","Βάλε λίγο πιο δυνατά τη μουσική.",
+"Χαμήλωσε λίγο την ένταση.","Θέλω να βγούμε μια βόλτα.","Πάμε στο πάρκο το απόγευμα;","Θα έρθει κανείς σήμερα;","Πότε θα γυρίσεις;",
+"Περιμένω στην είσοδο.","Μην ξεχάσεις να πάρεις ψωμί.","Χρειαζόμαστε γάλα και αυγά.","Φέρε μου την κουβέρτα.","Θέλω να κάνω ένα μπάνιο.",
+"Βοήθησέ με να σηκωθώ.","Κάτσε λίγο μαζί μου.","Είμαι καλά, μην ανησυχείς.","Θα σε πάρω τηλέφωνο αργότερα.","Στείλε μου μήνυμα όταν φτάσεις.",
+"Δεν μπορώ να μιλήσω τώρα.","Ναι, συμφωνώ μαζί σου.","Όχι, δεν θέλω ευχαριστώ.","Ίσως αύριο, θα δούμε.","Χρόνια πολλά, να είσαι πάντα καλά.",
+"Καλή επιτυχία στις εξετάσεις.","Περαστικά, να προσέχεις.","Συγγνώμη που άργησα.","Θέλω να δω τους φίλους μου.","Μου λείπεις πολύ.",
+"Έχω ραντεβού με τον γιατρό την Τρίτη.","Πρέπει να πάρω το φάρμακό μου.","Ξέχασα τον κωδικό μου.","Το κινητό μου δεν έχει μπαταρία.","Βάλε το κινητό στον φορτιστή.",
+"Θέλω να ακούσω ειδήσεις.","Τι παίζει απόψε στην τηλεόραση;","Μπορείς να μου διαβάσεις το μήνυμα;","Γράψε ότι θα έρθω στις έξι.","Ας τα πούμε από κοντά.",
+"Έλα να φάμε, το φαγητό είναι έτοιμο.","Θέλω λίγα φρούτα.","Δεν θέλω άλλο φαγητό, χόρτασα.","Το φαγητό ήταν πολύ νόστιμο.","Θέλω ένα ποτήρι χυμό πορτοκάλι.",
+"Κάνει πολλή ζέστη εδώ μέσα.","Άνοιξε το κλιματιστικό.","Βρέχει έξω, πάρε ομπρέλα.","Φοράω το μπουφάν μου και έρχομαι.","Πού πάμε αύριο το πρωί;",
+"Θα πάρουμε ταξί ή λεωφορείο;","Κλείσε ένα τραπέζι για τέσσερις.","Θέλω να πάω στη θάλασσα.","Το Σάββατο έχουμε γενέθλια.","Τι δώρο να πάρουμε;",
+"Πες του ότι τον σκέφτομαι.","Χαιρετίσματα σε όλους.","Μπορείς να με πας στο νοσοκομείο;","Κάλεσε τον γιατρό, δεν είμαι καλά.","Πονάει η πλάτη μου.",
+"Διψάω πολύ.","Θέλω να ξεκουραστώ λίγο.","Ξύπνησέ με στις οκτώ.","Βάλε ξυπνητήρι για αύριο.","Θέλω να αλλάξω ρούχα.",
+"Φέρε μου το μπλε πουλόβερ.","Πού είναι το τηλεκοντρόλ;","Δεν βρίσκω το πορτοφόλι μου.","Έλα να με πάρεις από τη δουλειά.","Σήμερα τελειώνω νωρίς.",
+"Έχω πολλή δουλειά αυτή την εβδομάδα.","Η συνάντηση μετατέθηκε για την Πέμπτη.","Στείλε μου το αρχείο στο ταχυδρομείο.","Θα είμαι στο γραφείο μέχρι τις πέντε.","Μπορούμε να μιλήσουμε αύριο;",
+"Χρειάζομαι λίγο χρόνο να το σκεφτώ.","Εντάξει, το κανονίσαμε.","Τα λέμε σε λίγο.","Περίμενε ένα λεπτό.","Δεν κατάλαβα, μπορείς να το πεις ξανά;",
+"Μίλα λίγο πιο αργά, σε παρακαλώ.","Γράψε μου τη διεύθυνση.","Μένω κοντά στην πλατεία.","Ποιο είναι το τηλέφωνό σου;","Χάρηκα πολύ που σε είδα.",
+"Να περάσεις όμορφα.","Καλό ταξίδι και καλή αντάμωση.","Έφτασες καλά;","Πώς πάει η δουλειά;","Τι κάνουν τα παιδιά;",
+"Η μητέρα μου θα έρθει το απόγευμα.","Ο αδερφός μου μένει στην Αθήνα.","Πες στη γιαγιά ότι την αγαπώ.","Θέλω να ακούσω λίγη μουσική.","Βάλε ένα ωραίο τραγούδι.",
+"Άλλαξε κανάλι.","Δείξε μου τις φωτογραφίες.","Πάρε μια φωτογραφία.","Θέλω να γράψω ένα μήνυμα στη Μαρία.","Στείλε στον Γιώργο ότι αργώ.",
+"Απάντησε ότι συμφωνώ.","Διάβασέ μου τα νέα μηνύματα.","Διέγραψε το τελευταίο μήνυμα.","Γράψε ένα σημείωμα για αύριο.","Θύμισέ μου να αγοράσω φάρμακα.",
+"Έχουμε σούπα για βραδινό;","Θέλω ένα σάντουιτς με τυρί.","Ζέστανε λίγο το φαγητό.","Το τσάι είναι πολύ ζεστό.","Πάμε για ψώνια στο σούπερ μάρκετ.",
+"Τι καιρό θα κάνει αύριο;","Πρέπει να πληρώσω τον λογαριασμό του ρεύματος.","Σβήσε τα φώτα στο σαλόνι.","Κατέβασε τα ρολά.","Άνοιξε την πόρτα, χτυπάει το κουδούνι.",
+"Ποιος είναι στην πόρτα;","Ήρθε ο ταχυδρόμος;","Πήγαινέ με στο σπίτι της αδερφής μου.","Θέλω να κάτσω στο μπαλκόνι.","Κάνει ωραίο καιρό σήμερα."
+];
+const PHON = [
+"Ο Ρένος τρέχει στο ρέμα με τα ρούχα.","Η στροφή στον δρόμο είναι στενή.","Το στρώμα στο κρεβάτι είναι σκληρό.","Η σκάλα στο σπίτι έχει σπάσει.","Τα σύννεφα σκεπάζουν τον ουρανό.",
+"Ο Σπύρος σπουδάζει στη Σπάρτη.","Το ψωμί είναι ψημένο και ζεστό.","Ξέχασα το ξυπνητήρι στο ξενοδοχείο.","Η ζωή στο χωριό είναι ήσυχη.","Ζητάω συγγνώμη για τη ζημιά.",
+"Τρία τραπέζια στην τραπεζαρία.","Ο κροκόδειλος κρύβεται στα καλάμια.","Η γραμμή του τρένου περνάει από το προάστιο.","Το πρωί πίνω πράσινο τσάι.","Ο Πέτρος φέρνει φρέσκα φρούτα.",
+"Η βροχή έβρεξε τα βράχια.","Το γράμμα γράφτηκε πολύ γρήγορα.","Ο δρόμος περνάει μέσα από το δάσος.","Η θάλασσα σήμερα είναι ήσυχη και καθαρή.","Στο σχολείο σχεδιάζουμε σχήματα.",
+"Η σφυρίχτρα σφυρίζει δυνατά.","Τα φλιτζάνια είναι στο πλυντήριο.","Το πλοίο πλησιάζει στο λιμάνι.","Ο κλέφτης άνοιξε την κλειδαριά.","Η γλυκιά πίτα γλίστρησε από το πιάτο.",
+"Το βλέμμα της ήταν γεμάτο αγάπη.","Οι επιβάτες στέκονται στη στάση.","Το σπασμένο ποτήρι είναι στον στρογγυλό δίσκο.","Ο σκύλος σκάβει στον κήπο.","Η Στέλλα στρώνει το τραπέζι.",
+"Τα ξύλα στο τζάκι ζεσταίνουν το σπίτι.","Το τζάμι του παραθύρου ράγισε.","Η τσάντα της Τζένης είναι τσαλακωμένη.","Ο ψαράς έπιασε πολλά ψάρια σήμερα.","Το ξύδι και το αλάτι είναι στο ντουλάπι.",
+"Η μπάλα έπεσε στο μπαλκόνι.","Οι ντομάτες είναι ώριμες και κόκκινες.","Το γκαράζ είναι γεμάτο κούτες.","Ο γκρίζος γάτος κοιμάται στον καναπέ.","Το εστιατόριο στρώνει τραπέζια έξω.",
+"Αστράφτει και βροντάει όλη νύχτα.","Ο αστυνομικός σταμάτησε το αυτοκίνητο.","Η Χριστίνα χρειάζεται χρήματα.","Χθες το βράδυ έπεσε χιόνι.","Το φθινόπωρο πέφτουν τα φύλλα.",
+"Το εκκλησάκι είναι στην κορυφή του λόφου.","Η πρεσβεία βρίσκεται στο κέντρο.","Ο ζωγράφος ζωγραφίζει ένα ζώο.","Το ζαχαροπλαστείο έχει ζεστά κουλούρια.","Ο Ζήσης ζει στη Ζάκυνθο.",
+"Ψάχνω τα ψώνια στο ψυγείο.","Ο ξάδερφός μου έρχεται την Παρασκευή.","Έξι ξένοι περιμένουν έξω.","Η σκηνή στήθηκε στην πλατεία.","Το σπίρτο έσβησε στον αέρα.",
+"Η στάμνα είναι στο στενό μπαλκόνι.","Ρίξε ρύζι στην κατσαρόλα.","Ο καρπουζάς φωνάζει στη γειτονιά.","Τα κεράσια είναι ώριμα και κατακόκκινα.","Η πριγκίπισσα περπατά στον κήπο.",
+"Προχθές πήγαμε προς το προάστιο.","Ο πρόεδρος προσπάθησε να προλάβει.","Η κραυγή ακούστηκε από τον δρόμο.","Τρώμε στρογγυλά κουλουράκια.","Κρεμάστε τα ρούχα στο σύρμα.",
+"Η βροχή σταμάτησε στις τρεις.","Το σπίτι του Σταύρου είναι στη στροφή.","Στρίψε δεξιά στο στενό.","Προσπέρασε το φορτηγό προσεκτικά.","Σε ευχαριστώ για τη σπουδαία βοήθεια.",
+"Η αστραπή φώτισε τον ουρανό.","Γράψε στο χαρτί τα στοιχεία σου.","Τα σπαράγγια είναι σπάνια φέτος.","Ο Χρήστος σκέφτεται σοβαρά το ζήτημα.","Ζήτησε ζάχαρη από τη γειτόνισσα.",
+"Το σκοτάδι σκέπασε το στενό.","Η γραβάτα του είναι γκρι.","Το τρόλεϊ σταματάει στην πλατεία.","Βρήκα το βραχιόλι στο πάτωμα.","Το φρύδι της είναι σηκωμένο.",
+"Ο σταθμός είναι στην άκρη της πόλης.","Η πρώτη προσπάθεια απέτυχε.","Σπρώξε την πόρτα προς τα έξω.","Φρόντισε τα φυτά στο μπαλκόνι.","Τα σταφύλια είναι στο καλάθι.",
+"Η στέγη στάζει όταν βρέχει.","Ψιλή βροχή πέφτει στο ψηλό βουνό.","Ξεκίνα πρώτος, σε ακολουθώ.","Ο κύριος Στράτος γράφει στην εφημερίδα.","Η Ζωή σπουδάζει στο εξωτερικό.",
+"Τρέξε γρήγορα στον σταθμό.","Άσπρο σπίτι με κόκκινη στέγη.","Η σκόνη στρώθηκε στα ράφια.","Το αεροπλάνο προσγειώθηκε στις δέκα.","Χρειάζομαι σκληρό στρώμα για τη μέση μου.",
+"Οι φοιτητές συγκεντρώθηκαν στη σχολή.","Η στρατηγική τους ήταν σωστή.","Σβήσε το κερί πριν φύγεις.","Φρέσκο ψάρι στη σχάρα.","Προσοχή στο σκαλοπάτι."
+];
+const GEN = [
+"Η βιβλιοθήκη ανοίγει στις εννιά το πρωί.","Τα παιδιά παίζουν στην αυλή του σχολείου.","Το καλοκαίρι οι μέρες είναι μεγάλες.","Η πόλη γεμίζει τουρίστες τον Αύγουστο.","Ο φούρνος της γειτονιάς βγάζει φρέσκο ψωμί.",
+"Η ταινία ήταν πιο μεγάλη από όσο περίμενα.","Διάβασα ένα ενδιαφέρον βιβλίο τον περασμένο μήνα.","Το λεωφορείο καθυστέρησε δέκα λεπτά.","Η αγορά είναι κλειστή την Κυριακή.","Οι γείτονες έκαναν γιορτή στην ταράτσα.",
+"Ο δάσκαλος εξήγησε το μάθημα με υπομονή.","Το μουσείο έχει δωρεάν είσοδο την πρώτη Κυριακή του μήνα.","Η ομάδα κέρδισε τον αγώνα στο τελευταίο λεπτό.","Η γάτα κοιμάται όλη μέρα στον ήλιο.","Το ποτάμι φούσκωσε μετά τις βροχές.",
+"Ο κήπος γέμισε λουλούδια την άνοιξη.","Η γιορτή του χωριού γίνεται κάθε καλοκαίρι.","Το τηλέφωνο χτύπησε στη μέση της νύχτας.","Η θερμοκρασία θα ανέβει το Σαββατοκύριακο.","Πολλοί άνθρωποι περπατούν στην παραλία το απόγευμα.",
+"Η εφημερίδα έγραψε για την καινούργια γέφυρα.","Ο μάγειρας έφτιαξε έναν υπέροχο μουσακά.","Τα μαγαζιά στο κέντρο κλείνουν αργά.","Το ρολόι στον τοίχο πάει πέντε λεπτά μπροστά.","Η σχολική χρονιά ξεκινάει τον Σεπτέμβριο.",
+"Οι ελιές μαζεύονται τον χειμώνα.","Το βουνό είναι χιονισμένο μέχρι τον Απρίλιο.","Η γιαγιά έπλεκε κάλτσες για όλη την οικογένεια.","Ο παππούς διηγούνταν ιστορίες από το χωριό.","Το αυτοκίνητο χρειάζεται σέρβις.",
+"Η ντουλάπα δεν χωράει άλλα ρούχα.","Οι φίλοι μου έρχονται για φαγητό την Παρασκευή.","Η παράσταση ξεκινάει στις εννιά και μισή.","Το νερό βράζει στους εκατό βαθμούς.","Το φεγγάρι φαίνεται καθαρά απόψε.",
+"Τα πουλιά φεύγουν νότια τον χειμώνα.","Η νέα γειτόνισσα είναι πολύ ευγενική.","Ο υπολογιστής αργεί να ανοίξει.","Η ιστοσελίδα δεν φορτώνει σωστά.","Το μήνυμα στάλθηκε πριν από μία ώρα.",
+"Η μπαταρία κρατάει όλη μέρα.","Ο καφές στο πάρκο είναι πολύ καλός.","Κάθε πρωί περπατάω μισή ώρα.","Η γυμναστική κάνει καλό στην υγεία.","Ο γιατρός είπε να πίνω περισσότερο νερό.",
+"Η φαρμακοποιός μου εξήγησε πώς να το παίρνω.","Το νοσοκομείο είναι δίπλα στον σταθμό.","Οι διακοπές μας πέρασαν πολύ γρήγορα.","Το ξενοδοχείο είχε θέα στη θάλασσα.","Η πτήση ακυρώθηκε λόγω κακοκαιρίας.",
+"Το τρένο για τη Λάρισα φεύγει κάθε ώρα.","Η Ακρόπολη φαίνεται από την ταράτσα.","Ο Λευκός Πύργος είναι σύμβολο της πόλης.","Τα νησιά γεμίζουν κόσμο τον Αύγουστο.","Η Κρήτη είναι το μεγαλύτερο ελληνικό νησί.",
+"Το λάδι της χρονιάς βγήκε εξαιρετικό.","Η φέτα ταιριάζει με την ντομάτα.","Οι σπανακόπιτες της θείας είναι οι καλύτερες.","Το Πάσχα ψήνουμε αρνί στη σούβλα.","Τα Χριστούγεννα στολίζουμε το δέντρο.",
+"Η Πρωτοχρονιά πέφτει φέτος Παρασκευή.","Κόψαμε τη βασιλόπιτα με όλη την οικογένεια.","Το φλουρί έπεσε στον μικρό.","Η μουσική του γάμου ήταν ζωντανή.","Χορέψαμε μέχρι το πρωί.",
+"Η βάφτιση θα γίνει τον Μάιο.","Ο νονός έφερε πολλά δώρα.","Η καινούργια δουλειά του αρέσει πολύ.","Η εταιρεία μετακόμισε σε νέα γραφεία.","Ο διευθυντής ζήτησε μια αναφορά.",
+"Η σύσκεψη κράτησε δύο ώρες.","Οι εξετάσεις ξεκινούν τον Ιούνιο.","Ο φοιτητής πέρασε όλα τα μαθήματα.","Η πτυχιακή του αφορά την τεχνητή νοημοσύνη.","Το εργαστήριο έχει καινούργιους υπολογιστές.",
+"Η τεχνολογία αλλάζει πολύ γρήγορα.","Το κινητό έχει γίνει απαραίτητο εργαλείο.","Πολλοί δουλεύουν πλέον από το σπίτι.","Ο ηλεκτρολόγος θα περάσει την Τετάρτη.","Τα φώτα ανάβουν αυτόματα το βράδυ.",
+"Ο θερμοστάτης κρατάει είκοσι δύο βαθμούς.","Τα ρολά κατεβαίνουν όταν δύει ο ήλιος.","Η θέρμανση ανοίγει μισή ώρα πριν ξυπνήσουμε.","Ο κήπος ποτίζεται κάθε πρωί.","Η πόρτα του γκαράζ ανοίγει με το κινητό.",
+"Το σύστημα ειδοποιεί όταν ανοίξει ένα παράθυρο.","Η κουζίνα έχει καινούργιο φούρνο.","Το πλυντήριο τελείωσε το πρόγραμμα.","Ο ήλιος βγήκε μετά από τρεις μέρες βροχή.","Ο πίνακας του σπιτιού είναι στον διάδρομο."
+];
+const SHORT = [
+"Ναι.","Όχι.","Εντάξει.","Ευχαριστώ.","Παρακαλώ.","Βοήθεια.","Νερό.","Φαγητό.","Τουαλέτα.","Περίμενε.",
+"Στείλε.","Σβήσε.","Διάβασε.","Ξανά.","Σταμάτα.","Συνέχισε.","Αύριο.","Σήμερα.","Απόψε.","Τώρα.",
+"Αργότερα.","Μαμά.","Μπαμπά.","Γιατρός.","Κάνει κρύο.","Κάνει ζέστη.","Πονάω.","Κουράστηκα.","Καλημέρα.","Καληνύχτα.",
+"Γεια σου.","Τα λέμε.","Έλα εδώ.","Κάτσε.","Άνοιξε.","Κλείσε.","Ανέβα.","Κατέβα.","Δευτέρα.","Τρίτη.",
+"Τετάρτη.","Πέμπτη.","Παρασκευή.","Σάββατο.","Κυριακή.","Ένα, δύο, τρία.","Τέσσερα, πέντε, έξι.","Επτά, οκτώ, εννιά, δέκα.","Είκοσι.","Εκατό."
+];
+const DEMO = [
+"Καλησπέρα σε όλους, είμαι πολύ χαρούμενος που είμαι εδώ.","Θέλω να στείλω μήνυμα στον Στέλιο ότι έρχομαι σε δέκα λεπτά.","Μπορείς να μου φέρεις ένα ποτήρι κρύο νερό;","Σήμερα το πρωί πήγα στο φαρμακείο με τη Χριστίνα.","Σε ευχαριστώ πολύ που με άκουσες προσεκτικά.",
+"Άνοιξε τα παράθυρα στο σαλόνι γιατί κάνει ζέστη.","Θα ήθελα έναν ελληνικό καφέ σκέτο.","Το απόγευμα θα πάμε βόλτα στην παραλία.","Στρίψε αριστερά στο δεύτερο στενό.","Ο Σπύρος και η Ζωή θα έρθουν για φαγητό το Σάββατο.",
+"Πρέπει να προλάβω το τρένο των επτά.","Γράψε στη λίστα ψωμί, τυρί και πορτοκάλια.","Η φωνή μου δεν είναι καθαρή, αλλά το κινητό με καταλαβαίνει.","Χρειάζομαι βοήθεια να στρώσω το κρεβάτι.","Πες στον Χρήστο ότι τον περιμένω στη στάση.",
+"Αυτή η εφαρμογή γράφει ακριβώς αυτό που θέλω να πω.","Κλείσε τα φώτα στην κρεβατοκάμαρα.","Αύριο έχω ραντεβού στις έντεκα και μισή.","Ενημέρωσε τη μαμά ότι είμαι στον δρόμο.","Ευχαριστούμε την επιτροπή για τον χρόνο της."
+];
+function speak(sentence){
+  const V='αεηιουωάέήίόύώϊϋΐΰ', PLAIN='αεηιουω';
+  return sentence.split(' ').map(tok=>{
+    let w=tok.toLocaleLowerCase('el');
+    const m=w.match(/^([^α-ωάέήίόύώϊϋΐΰς]*)(.*?)([^α-ωάέήίόύώϊϋΐΰς]*)$/);
+    let [_,pre,core,post]=m;
+    if(core.length>=3 && PLAIN.includes(core[0]) && !V.includes(core[1]) && V.includes(core[2])) core=core.slice(1);
+    core=core.replace(/σ(?=[πτκχφθ])/g,'');
+    core=core.replace(/([πτκβγδφθχ])[ρλ]/g,'$1');
+    core=core.replace(/ρ/g,'λ');
+    return pre+core+post;
+  }).join(' ');
+}
+// ---------- items ----------
+function seeded(seed){return function(){seed|=0;seed=seed+0x6D2B79F5|0;let t=Math.imul(seed^seed>>>15,1|seed);t=t+Math.imul(t^t>>>7,61|t)^t;return((t^t>>>14)>>>0)/4294967296;}}
+const CAT={needs:'Καθημερινές ανάγκες',phon:'Δύσκολοι ήχοι',gen:'Γενικές προτάσεις',short:'Σύντομες λέξεις',demo:'Demo, μόνο για έλεγχο'};
+let pool=[...NEEDS.map(t=>({t,c:'needs'})),...PHON.map(t=>({t,c:'phon'})),...GEN.map(t=>({t,c:'gen'})),...SHORT.map(t=>({t,c:'short'}))];
+const rnd=seeded(20260925);
+for(let i=pool.length-1;i>0;i--){const j=Math.floor(rnd()*(i+1));[pool[i],pool[j]]=[pool[j],pool[i]];}
+const MAIN_ITEMS=pool.map((x,i)=>({id:'m'+String(i+1).padStart(3,'0'),text:x.t,cat:x.c,set:'train_pool'}));
+const DEMO_ITEMS=DEMO.map((t,i)=>({id:'d'+String(i+1).padStart(2,'0'),text:t,cat:'demo',set:'demo'}));
+const ALL=[...MAIN_ITEMS,...DEMO_ITEMS]; const BYID=Object.fromEntries(ALL.map(x=>[x.id,x]));
+
+// ---------- storage (IndexedDB) ----------
+let dbp=null;
+function idb(){ if(dbp) return dbp; dbp=new Promise((res,rej)=>{ try{const r=indexedDB.open('vt-adapt-rec',1); r.onupgradeneeded=()=>r.result.createObjectStore('takes',{keyPath:'id'}); r.onsuccess=()=>res(r.result); r.onerror=()=>rej(r.error);}catch(e){rej(e)} }); return dbp;}
+async function tx(mode,fn){const db=await idb();return new Promise((res,rej)=>{const t=db.transaction('takes',mode);const s=t.objectStore('takes');const out=fn(s);t.oncomplete=()=>res(out&&out.result!==undefined?out.result:out);t.onerror=()=>rej(t.error);});}
+const putTake=r=>tx('readwrite',s=>s.put(r));
+const getTake=id=>tx('readonly',s=>s.get(id));
+const allTakes=()=>tx('readonly',s=>s.getAll());
+const clearTakes=()=>tx('readwrite',s=>s.clear());
+
+// ---------- state ----------
+const $=id=>document.getElementById(id);
+let setName='main', idx=0, session=1, takes={}, listFilter='all', storageOk=true;
+try{ session=+(localStorage.getItem('vt-session')||1); const st=JSON.parse(localStorage.getItem('vt-pos')||'{}'); if(st.set) setName=st.set; if(Number.isInteger(st.idx)) idx=st.idx; }catch(e){}
+const items=()=>setName==='main'?MAIN_ITEMS:DEMO_ITEMS;
+function savePos(){try{localStorage.setItem('vt-pos',JSON.stringify({set:setName,idx}));localStorage.setItem('vt-session',String(session));}catch(e){}}
+
+// ---------- render ----------
+function esc(s){return s.replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));}
+function guideHTML(text){
+  const a=text.split(' '), b=speak(text).split(' ');
+  return b.map((w,i)=>{const orig=a[i].toLocaleLowerCase('el'); return w!==orig?`<span class="ch">${esc(w)}</span>`:esc(w);}).join(' ');
+}
+function render(){
+  const L=items(); if(idx>=L.length) idx=L.length-1; if(idx<0) idx=0;
+  const it=L[idx], tk=takes[it.id];
+  $('setMain').setAttribute('aria-pressed',setName==='main'); $('setDemo').setAttribute('aria-pressed',setName==='demo');
+  $('itemNo').textContent=`${idx+1} από ${L.length}`; $('itemCat').textContent=CAT[it.cat];
+  $('text').textContent=it.text; $('guide').innerHTML=guideHTML(it.text);
+  const done=L.filter(x=>takes[x.id]).length;
+  $('prog').style.width=(100*done/L.length)+'%';
+  $('countTxt').textContent=`${done} από ${L.length} έτοιμες`;
+  const inSess=Object.values(takes).filter(t=>t.session===session).length;
+  $('sessTxt').textContent=`${inSess} σε αυτή τη συνεδρία`;
+  const st=$('status');
+  if(!storageOk){st.className='status warn';st.textContent='Η συσκευή δεν επιτρέπει αποθήκευση εδώ. Οι λήψεις θα χαθούν αν κλείσεις τη σελίδα, οπότε κάνε εξαγωγή πριν φύγεις.';}
+  else if(tk){st.className='status ok';st.textContent=`Υπάρχει λήψη: ${tk.dur.toFixed(1)} δευτ., συνεδρία ${tk.session}. Ηχογράφησε ξανά για να την αντικαταστήσεις.`;}
+  else {st.className='status';st.textContent='';}
+  $('play').disabled=!tk; $('prev').disabled=idx===0; $('next').disabled=idx===L.length-1;
+  savePos();
+}
+function renderList(){
+  const L=items(); const rows=[];
+  L.forEach((it,i)=>{const tk=takes[it.id]; if(listFilter==='todo'&&tk) return;
+    rows.push(`<tr class="jump" data-i="${i}"><td><span class="dot ${tk?'d':''}"></span></td><td>${i+1}</td><td>${esc(it.text)}</td><td>${tk?tk.session:'–'}</td></tr>`);});
+  $('tbody').innerHTML=rows.join('')||'<tr><td colspan="4">Όλες οι προτάσεις έχουν λήψη.</td></tr>';
+}
+function renderExp(){
+  const v=Object.values(takes); const bySess={};
+  v.forEach(t=>{const k=BYID[t.id].set==='demo'?'demo':'s'+t.session; bySess[k]=(bySess[k]||0)+1;});
+  const mins=v.reduce((a,t)=>a+t.dur,0)/60;
+  const parts=Object.keys(bySess).sort().map(k=>k==='demo'?`demo: ${bySess[k]}`:`συνεδρία ${k.slice(1)}: ${bySess[k]}`);
+  $('expStats').innerHTML=`<strong>${v.length} λήψεις</strong>, περίπου ${mins.toFixed(1)} λεπτά ήχου.<br>${parts.join(', ')||'Δεν υπάρχουν ακόμη λήψεις.'}`;
+}
+function showTab(name){
+  document.querySelectorAll('nav button').forEach(b=>b.setAttribute('aria-selected',b.dataset.tab===name));
+  ['rec','list','prof','exp'].forEach(t=>$('tab-'+t).hidden=t!==name);
+  if(name==='list') renderList(); if(name==='exp') renderExp();
+}
+
+// ---------- audio ----------
+let ctx=null, stream=null, proc=null, recording=false, chunks=[], ring=[], busy=false;
+async function initAudio(){
+  if(ctx) return true;
+  try{
+    stream=await navigator.mediaDevices.getUserMedia({audio:{channelCount:1,echoCancellation:false,noiseSuppression:false,autoGainControl:false}});
+  }catch(e){
+    const st=$('status'); st.className='status warn';
+    st.textContent='Δεν υπάρχει πρόσβαση στο μικρόφωνο. Επίτρεψέ το από τις ρυθμίσεις του browser. Αν δεν εμφανίζεται ερώτηση, άνοιξε τη σελίδα από το αρχείο HTML σε Chrome.';
+    return false;
+  }
+  ctx=new (window.AudioContext||window.webkitAudioContext)();
+  const src=ctx.createMediaStreamSource(stream);
+  proc=ctx.createScriptProcessor(4096,1,1);
+  const mute=ctx.createGain(); mute.gain.value=0;
+  proc.onaudioprocess=e=>{
+    const d=new Float32Array(e.inputBuffer.getChannelData(0));
+    let s=0; for(let i=0;i<d.length;i++) s+=d[i]*d[i];
+    $('meter').style.width=Math.min(100,Math.sqrt(s/d.length)*400)+'%';
+    if(recording) chunks.push(d); else { ring.push(d); if(ring.length>2) ring.shift(); }
+  };
+  src.connect(proc); proc.connect(mute); mute.connect(ctx.destination);
+  return true;
+}
+async function toggleRec(){
+  if(busy) return;
+  if(!recording){
+    if(!(await initAudio())) return;
+    if(ctx.state==='suspended') await ctx.resume();
+    chunks=[...ring]; recording=true;
+    $('recBtn').classList.add('on'); $('recBtn').textContent='Τέλος'; $('recBtn').setAttribute('aria-label','Σταμάτα και αποθήκευσε');
+    const st=$('status'); st.className='status'; st.textContent='Ηχογραφεί…';
+  } else {
+    busy=true; await new Promise(r=>setTimeout(r,250)); recording=false;
+    $('recBtn').classList.remove('on'); $('recBtn').textContent='Ηχογράφηση'; $('recBtn').setAttribute('aria-label','Ξεκίνα ηχογράφηση');
+    try{ await finishTake(); } finally { busy=false; }
+  }
+}
+async function finishTake(){
+  const n=chunks.reduce((a,c)=>a+c.length,0); const raw=new Float32Array(n); let o=0; chunks.forEach(c=>{raw.set(c,o);o+=c.length;}); chunks=[];
+  const sr=ctx.sampleRate; const outLen=Math.ceil(n*16000/sr);
+  const off=new OfflineAudioContext(1,outLen,16000); const buf=off.createBuffer(1,n,sr); buf.copyToChannel(raw,0);
+  const bs=off.createBufferSource(); bs.buffer=buf; bs.connect(off.destination); bs.start();
+  let pcm=(await off.startRendering()).getChannelData(0);
+  pcm=trim(pcm);
+  const dur=pcm.length/16000; let peak=0,sum=0; for(const v of pcm){const a=Math.abs(v); if(a>peak) peak=a; sum+=v*v;} const rms=Math.sqrt(sum/Math.max(1,pcm.length));
+  const warn=[]; if(dur<1) warn.push('η λήψη είναι κάτω από 1 δευτ. και θα απορριφθεί στην εκπαίδευση'); if(dur>30) warn.push('η λήψη ξεπερνά τα 30 δευτ.');
+  if(peak>0.98) warn.push('η φωνή «ψαλιδίζει», απομακρύνσου λίγο από το μικρόφωνο'); if(rms<0.01) warn.push('η φωνή ακούγεται πολύ σιγά');
+  const it=items()[idx];
+  const rec={id:it.id,session,dur,ts:new Date().toISOString(),wav:encodeWav(pcm)};
+  try{ await putTake(rec); }catch(e){ storageOk=false; memTakes[it.id]=rec; }
+  takes[it.id]={session:rec.session,dur,ts:rec.ts};
+  if(warn.length){ render(); const st=$('status'); st.className='status warn'; st.textContent='Αποθηκεύτηκε, αλλά: '+warn.join('· ')+'. Αν θέλεις, ηχογράφησέ την ξανά.'; return; }
+  goNextTodo(true);
+}
+function trim(x){
+  const F=320; let maxE=0; const E=[]; for(let i=0;i<x.length;i+=F){let s=0;for(let j=i;j<Math.min(i+F,x.length);j++) s+=x[j]*x[j]; const e=Math.sqrt(s/F); E.push(e); if(e>maxE) maxE=e;}
+  const th=Math.max(0.004,maxE*0.08); let a=E.findIndex(e=>e>th); if(a<0) return x; let b=E.length-1; while(b>a&&E[b]<=th) b--;
+  const pad=13; return x.slice(Math.max(0,(a-pad)*F),Math.min(x.length,(b+1+pad)*F));
+}
+function encodeWav(f){
+  const b=new ArrayBuffer(44+f.length*2), v=new DataView(b); const w=(o,s)=>{for(let i=0;i<s.length;i++) v.setUint8(o+i,s.charCodeAt(i));};
+  w(0,'RIFF'); v.setUint32(4,36+f.length*2,true); w(8,'WAVE'); w(12,'fmt '); v.setUint32(16,16,true); v.setUint16(20,1,true); v.setUint16(22,1,true);
+  v.setUint32(24,16000,true); v.setUint32(28,32000,true); v.setUint16(32,2,true); v.setUint16(34,16,true); w(36,'data'); v.setUint32(40,f.length*2,true);
+  for(let i=0;i<f.length;i++){const s=Math.max(-1,Math.min(1,f[i])); v.setInt16(44+i*2,s<0?s*0x8000:s*0x7FFF,true);}
+  return new Blob([b],{type:'audio/wav'});
+}
+const memTakes={};
+async function loadTake(id){ if(memTakes[id]) return memTakes[id]; try{return await getTake(id);}catch(e){return null;} }
+let audioEl=null;
+async function play(){ const r=await loadTake(items()[idx].id); if(!r) return; if(audioEl){audioEl.pause();URL.revokeObjectURL(audioEl.src);} audioEl=new Audio(URL.createObjectURL(r.wav)); audioEl.play(); }
+function goNextTodo(fromSave){
+  const L=items(); for(let k=1;k<=L.length;k++){const j=(idx+k)%L.length; if(!takes[L[j].id]){idx=j; render(); return;}}
+  if(fromSave&&idx<L.length-1) idx++; render();
+  if(!fromSave){const st=$('status'); st.className='status ok'; st.textContent='Όλες οι προτάσεις αυτού του συνόλου έχουν λήψη.';}
+}
+
+// ---------- zip (store) ----------
+const CRC=(()=>{const t=new Uint32Array(256);for(let n=0;n<256;n++){let c=n;for(let k=0;k<8;k++) c=c&1?0xEDB88320^(c>>>1):c>>>1;t[n]=c>>>0;}return t;})();
+function crc32(u){let c=0xFFFFFFFF;for(let i=0;i<u.length;i++) c=CRC[(c^u[i])&0xFF]^(c>>>8);return (c^0xFFFFFFFF)>>>0;}
+async function makeZip(files){
+  const enc=new TextEncoder(), parts=[], cen=[]; let off=0;
+  const d=new Date(), dt=((d.getHours()<<11)|(d.getMinutes()<<5)|(d.getSeconds()>>1)), dd=(((d.getFullYear()-1980)<<9)|((d.getMonth()+1)<<5)|d.getDate());
+  for(const f of files){
+    const name=enc.encode(f.name); const data=f.data instanceof Blob?new Uint8Array(await f.data.arrayBuffer()):enc.encode(f.data);
+    const crc=crc32(data); const h=new DataView(new ArrayBuffer(30));
+    h.setUint32(0,0x04034b50,true);h.setUint16(4,20,true);h.setUint16(6,0x0800,true);h.setUint16(8,0,true);h.setUint16(10,dt,true);h.setUint16(12,dd,true);
+    h.setUint32(14,crc,true);h.setUint32(18,data.length,true);h.setUint32(22,data.length,true);h.setUint16(26,name.length,true);h.setUint16(28,0,true);
+    parts.push(h.buffer,name,data);
+    const c=new DataView(new ArrayBuffer(46));
+    c.setUint32(0,0x02014b50,true);c.setUint16(4,20,true);c.setUint16(6,20,true);c.setUint16(8,0x0800,true);c.setUint16(10,0,true);c.setUint16(12,dt,true);c.setUint16(14,dd,true);
+    c.setUint32(16,crc,true);c.setUint32(20,data.length,true);c.setUint32(24,data.length,true);c.setUint16(28,name.length,true);c.setUint32(42,off,true);
+    cen.push(c.buffer,name); off+=30+name.length+data.length;
+  }
+  const cenSize=cen.reduce((a,p)=>a+(p.byteLength),0);
+  const e=new DataView(new ArrayBuffer(22)); e.setUint32(0,0x06054b50,true);e.setUint16(8,files.length,true);e.setUint16(10,files.length,true);e.setUint32(12,cenSize,true);e.setUint32(16,off,true);
+  return new Blob([...parts,...cen,e.buffer],{type:'application/zip'});
+}
+function csvCell(s){s=String(s);return /[",\n]/.test(s)?'"'+s.replace(/"/g,'""')+'"':s;}
+async function doExport(){
+  const st=$('expStatus'); st.className='status'; st.textContent='Ετοιμάζεται το αρχείο…';
+  let recs=[]; try{recs=await allTakes();}catch(e){} Object.values(memTakes).forEach(r=>{if(!recs.find(x=>x.id===r.id)) recs.push(r);});
+  if(!recs.length){st.className='status warn';st.textContent='Δεν υπάρχουν λήψεις για εξαγωγή. Ηχογράφησε πρώτα μερικές προτάσεις.';return;}
+  recs.sort((a,b)=>a.id.localeCompare(b.id));
+  const rows=[['file','text','pronounced_as','set','category','session','duration_s','sample_rate','recorded_at'].join(',')];
+  const files=[];
+  for(const r of recs){const it=BYID[r.id]; const fn=`wav/${r.id}.wav`; files.push({name:fn,data:r.wav});
+    rows.push([fn,it.text,speak(it.text),it.set,it.cat,r.session,r.dur.toFixed(2),16000,r.ts].map(csvCell).join(','));}
+  files.unshift({name:'metadata.csv',data:'\uFEFF'+rows.join('\n')+'\n'});
+  files.push({name:'README.txt',data:'Ηχογραφήσεις προσαρμογής φωνής.\nwav/: 16 kHz mono 16-bit PCM.\nmetadata.csv: text = σωστό κείμενο (ετικέτα εκπαίδευσης), pronounced_as = πώς ειπώθηκε σύμφωνα με το προφίλ.\nset=demo: φράσεις του live demo, ΠΟΤΕ στην εκπαίδευση.\nΠροτεινόμενος διαχωρισμός: session 1-4 train, 5 dev, 6 test.\nΠροφίλ: ρ->λ, απλοποίηση συμπλεγμάτων (σ+στιγμιαίο, στιγμιαίο+ρ/λ), απάλειψη άτονου αρχικού φωνήεντος.\n'});
+  const blob=await makeZip(files); const name=`hxografiseis_${new Date().toISOString().slice(0,10)}.zip`;
+  let dl=null; try{ if(window.claude&&window.claude.use) dl=await window.claude.use('downloads'); }catch(e){}
+  if(dl){ try{ await dl.save({filename:name,data:blob}); st.className='status ok'; st.textContent=`Το αρχείο ${name} αποθηκεύτηκε (${(blob.size/1048576).toFixed(1)} MB).`; }
+    catch(e){ st.className='status warn'; st.textContent=e&&e.code==='declined'?'Η αποθήκευση ακυρώθηκε.':'Η αποθήκευση δεν ολοκληρώθηκε ('+(e&&e.code||'σφάλμα')+').'; } return; }
+  const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download=name; document.body.appendChild(a); a.click(); a.remove();
+  st.className='status ok'; st.textContent=`Το αρχείο ${name} κατεβαίνει (${(blob.size/1048576).toFixed(1)} MB).`;
+}
+
+// ---------- wiring ----------
+const sel=$('session'); for(let i=1;i<=8;i++){const o=document.createElement('option');o.value=i;o.textContent=i+(i===5?' (dev)':i===6?' (test)':'');sel.appendChild(o);} sel.value=session;
+sel.onchange=()=>{session=+sel.value;savePos();render();};
+document.querySelectorAll('nav button').forEach(b=>b.onclick=()=>showTab(b.dataset.tab));
+$('setMain').onclick=()=>{setName='main';idx=0;goNextTodo(false);};
+$('setDemo').onclick=()=>{setName='demo';idx=0;goNextTodo(false);};
+$('prev').onclick=()=>{idx--;render();}; $('next').onclick=()=>{idx++;render();};
+$('nextTodo').onclick=()=>goNextTodo(false);
+$('recBtn').onclick=toggleRec; $('play').onclick=play;
+$('fAll').onclick=()=>{listFilter='all';$('fAll').setAttribute('aria-pressed',true);$('fTodo').setAttribute('aria-pressed',false);renderList();};
+$('fTodo').onclick=()=>{listFilter='todo';$('fTodo').setAttribute('aria-pressed',true);$('fAll').setAttribute('aria-pressed',false);renderList();};
+$('tbody').onclick=e=>{const tr=e.target.closest('tr.jump'); if(!tr) return; idx=+tr.dataset.i; showTab('rec'); render();};
+$('exportBtn').onclick=doExport;
+$('wipe').onclick=async()=>{ if(!confirm('Να διαγραφούν όλες οι λήψεις από αυτή τη συσκευή; Κάνε πρώτα εξαγωγή αν τις χρειάζεσαι.')) return; try{await clearTakes();}catch(e){} for(const k in memTakes) delete memTakes[k]; takes={}; renderExp(); render(); };
+document.addEventListener('keydown',e=>{ if(e.target.tagName==='SELECT'||$('tab-rec').hidden) return;
+  if(e.code==='Space'){e.preventDefault();toggleRec();} else if(e.key==='ArrowRight'&&idx<items().length-1){idx++;render();} else if(e.key==='ArrowLeft'&&idx>0){idx--;render();} else if(e.key==='p'||e.key==='π'){play();}});
+(async()=>{ try{ const recs=await allTakes(); recs.forEach(r=>takes[r.id]={session:r.session,dur:r.dur,ts:r.ts}); }catch(e){ storageOk=false; } render(); })();
+render();
+</script></body></html>

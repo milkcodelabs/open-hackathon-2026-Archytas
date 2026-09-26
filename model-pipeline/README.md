@@ -10,6 +10,7 @@ the app's decoding parameters. Nothing here runs on the phone.
 | `el_homophones.bin` | `voicetotext homophones` (`voicetotext/phonetics/homophones.py`) |
 | `el_gpt2.int8.onnx`, `el_gpt2.vocab.json`, `el_gpt2.merges.txt` | `voicetotext export gpt2` (`voicetotext/decoding/gpt2_export.py`) |
 | `test.wav` | `tests/fixtures/audio/clip1.wav` (FLEURS, CC-BY 4.0) |
+| `omni.personal.onnx`, `omni.personal.labels.json`, `omni.personal.json` (optional) | speaker fine-tune on Colab, `personalization/` (its own README) |
 
 ## Layout
 
@@ -21,6 +22,7 @@ the app's decoding parameters. Nothing here runs on the phone.
 | `voicetotext/eval/` | FLEURS / Common Voice manifests, WER/CER harness, alpha/beta tuning |
 | `voicetotext/pipeline.py`, `cli.py`, `config.py` | audio -> emissions -> decoder, the `voicetotext` command, configuration |
 | `configs/` | `default.yaml`, `omni_greedy.yaml`, `omni_beam.yaml`, `lm_phone.yaml` |
+| `personalization/` | personal acoustic model: recording page, Colab fine-tune, phone export |
 | `scripts/make_fixtures.py` | regenerates the test fixtures from the acoustic model |
 | `tests/` | unit and integration tests; no model or network needed |
 
