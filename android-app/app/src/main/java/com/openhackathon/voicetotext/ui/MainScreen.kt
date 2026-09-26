@@ -92,6 +92,8 @@ data class PersonalChoice(val key: String, val title: String, val mb: Long, val 
 /** Everything the screen shows, read once per recomposition by MainActivity. */
 data class ScreenState(
     val mic: Boolean,
+    /** Notification permission, required from Android 13 so the bubble can stay in the foreground. */
+    val notifications: Boolean,
     val overlay: Boolean,
     val accessibility: Boolean,
     val filesPresent: Boolean,
@@ -110,6 +112,8 @@ data class ScreenState(
     val loadedModel: String?,
     /** MB of the personal model still to download (0 when it is complete on the phone). */
     val personalMissingMb: Long,
+    /** MB of Nikoleta's model still to download (0 when it is complete on the phone). */
+    val nikoletaMissingMb: Long,
     val llmOn: Boolean,
     val llmProvider: LlmCorrector.Provider,
     /** Providers whose API key was built into the app. */
@@ -145,6 +149,8 @@ interface MainActions {
     fun download()
     fun cancelDownload()
     fun downloadPersonal()
+    fun downloadNikoleta()
+    fun downloadTestWav()
 }
 
 /** Dev mode: every setting, the in-app microphone and the analysis of the last recognition. */
@@ -423,7 +429,22 @@ private fun ModelsCard(state: ScreenState, actions: MainActions) {
                 onClick = { actions.downloadPersonal() },
                 modifier = Modifier.fillMaxWidth().height(52.dp),
             ) { Text("Λήψη προσωπικού μοντέλου (${state.personalMissingMb} MB)", fontSize = 16.sp) }
-            Text("Εκπαιδευμένο στη φωνή του ομιλητή. Μετά τη λήψη διαλέγεται από το «Προσωπικό μοντέλο».",
+            Text("Εκπαιδευμένο στη φωνή του ομιλητή. Μετά τη λήψη διαλέγεται από το «Μοντέλο φωνής».",
+                fontSize = 13.sp, color = OnMuted, modifier = Modifier.padding(top = 4.dp))
+        }
+        Spacer(Modifier.height(8.dp))
+        StatusRow(
+            ok = state.nikoletaMissingMb == 0L,
+            text = if (state.nikoletaMissingMb == 0L) "Μοντέλο Νικολέτας στο κινητό (${ModelDownloader.nikoletaBytes / 1_000_000} MB)"
+            else "Μοντέλο Νικολέτας: προαιρετικό",
+        )
+        if (state.nikoletaMissingMb > 0 && !p.running) {
+            Spacer(Modifier.height(8.dp))
+            OutlinedButton(
+                onClick = { actions.downloadNikoleta() },
+                modifier = Modifier.fillMaxWidth().height(52.dp),
+            ) { Text("Λήψη μοντέλου Νικολέτας (${state.nikoletaMissingMb} MB)", fontSize = 16.sp) }
+            Text("Δεύτερο προσωπικό μοντέλο. Μετά τη λήψη διαλέγεται από το «Μοντέλο φωνής».",
                 fontSize = 13.sp, color = OnMuted, modifier = Modifier.padding(top = 4.dp))
         }
         Spacer(Modifier.height(8.dp))
@@ -651,7 +672,23 @@ private fun SpeakerCard(state: ScreenState) {
 @Composable
 private fun CheckCard(state: ScreenState, actions: MainActions) {
     var tryText by remember { mutableStateOf("") }
+    val test by ModelDownloader.testWavProgress.collectAsState()
     Section("Έλεγχος") {
+        OutlinedButton(
+            onClick = { actions.downloadTestWav() },
+            enabled = !test.running,
+            modifier = Modifier.fillMaxWidth().height(52.dp),
+        ) { Text(if (test.running) "Λήψη test.wav..." else "Λήψη test.wav", fontSize = 16.sp) }
+        Text(
+            when {
+                test.running -> "${test.bytesDone / 1_000_000} MB"
+                test.error != null -> test.error ?: ""
+                state.testWav -> "Το test.wav είναι στο κινητό."
+                else -> "Δεν έχει κατέβει ακόμα. Μπαίνει μόνο από εδώ, όχι με τα μοντέλα."
+            },
+            fontSize = 14.sp, color = OnMuted, modifier = Modifier.padding(top = 6.dp),
+        )
+        Spacer(Modifier.height(10.dp))
         OutlinedButton(
             onClick = { actions.runCheck() },
             enabled = state.filesPresent && state.testWav,

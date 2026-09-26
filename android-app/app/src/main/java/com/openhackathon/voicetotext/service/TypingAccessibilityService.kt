@@ -4,8 +4,10 @@ import android.accessibilityservice.AccessibilityService
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
+import android.os.Build
 import android.os.Bundle
 import android.util.Log
+import java.text.Normalizer
 import android.view.KeyEvent
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
@@ -41,6 +43,9 @@ class TypingAccessibilityService : AccessibilityService() {
 
     /** Our own phrases, newest last. */
     private val injected = ArrayDeque<Injection>()
+
+    /** Where AppCompat stores a hint when [AccessibilityNodeInfo.getHintText] is empty. */
+    private val HINT_EXTRA = "androidx.view.accessibility.AccessibilityNodeInfoCompat.HINT_TEXT_KEY"
 
     override fun onServiceConnected() {
         instance = this
@@ -114,10 +119,58 @@ class TypingAccessibilityService : AccessibilityService() {
             rememberedEditable()?.let { "remembered" to it },
         ).distinctBy { it.second }
 
-    /** [node]'s text as the app holds it right now ("" while it shows its hint); null if gone. */
+    /**
+     * [node]'s text as the app holds it right now; null if the node is gone.
+     * Empty while a hint is showing. A failed [AccessibilityNodeInfo.refresh] is ignored:
+     * WhatsApp's composer often returns false while the node is still usable, and giving
+     * up here falls through to a paste that keeps the hint.
+     *
+     * Some fields report the hint as their text without [AccessibilityNodeInfo.isShowingHintText]
+     * (WhatsApp's "Message"). A text that is exactly the hint, wherever that hint is published
+     * on the node, is empty too. Otherwise that word is written in front of the result.
+     */
     private fun freshText(node: AccessibilityNodeInfo): String? {
-        if (!runCatching { node.refresh() }.getOrDefault(false) || !node.isEditable) return null
-        return if (node.isShowingHintText) "" else node.text?.toString() ?: ""
+        runCatching { node.refresh() }
+        if (!node.isEditable) return null
+        if (node.isShowingHintText) return ""
+        val text = node.text?.toString() ?: ""
+        if (sameWords(text, hintOf(node)) || sameWords(text, node.contentDescription?.toString())) return ""
+        return text
+    }
+
+    /** The field's placeholder, from the node itself or the box wrapped around it. */
+    private fun hintOf(node: AccessibilityNodeInfo): String? {
+        var current: AccessibilityNodeInfo? = node
+        repeat(4) {
+            val n = current ?: return null
+            listOfNotNull(
+                n.hintText?.toString(),
+                if (Build.VERSION.SDK_INT >= 28) n.tooltipText?.toString() else null,
+                n.extras?.getCharSequence(HINT_EXTRA)?.toString(),
+            ).firstOrNull { it.isNotBlank() }?.let { return it }
+            current = n.parent
+        }
+        return null
+    }
+
+    private fun sameWords(text: String, hint: String?): Boolean {
+        if (hint.isNullOrBlank()) return false
+        return plain(text) == plain(hint)
+    }
+
+    private fun plain(s: String) =
+        Normalizer.normalize(s, Normalizer.Form.NFC).replace('\u00a0', ' ').replace("\u200b", "").trim()
+
+    /** [value] without a leading [hint] word; unchanged when [hint] is the start of a real word. */
+    private fun withoutLeadingHint(value: String, hint: String?): String {
+        if (hint.isNullOrBlank()) return value
+        val v = plain(value)
+        val h = plain(hint)
+        if (v == h) return ""
+        if (v.length > h.length && v.startsWith(h) && v[h.length].isWhitespace()) {
+            return v.substring(h.length).trimStart()
+        }
+        return value
     }
 
     private fun cursorOf(node: AccessibilityNodeInfo, text: String): Int =
@@ -129,6 +182,15 @@ class TypingAccessibilityService : AccessibilityService() {
         val sep = if (existing.isEmpty() || existing.endsWith(" ")) "" else " "
         val combined = existing + sep + text
         if (!setText(node, combined, combined.length)) return null
+        // The field may commit its hint in front of what we just wrote. Say it again without that word.
+        val hint = hintOf(node)
+        runCatching { node.refresh() }
+        val now = node.text?.toString().orEmpty()
+        val fixed = withoutLeadingHint(now, hint)
+        if (fixed != now && fixed.isNotEmpty()) {
+            setText(node, fixed, fixed.length)
+            return Injection(node, (fixed.length - text.length).coerceAtLeast(0), "", text)
+        }
         return Injection(node, existing.length + sep.length, sep, text)
     }
 

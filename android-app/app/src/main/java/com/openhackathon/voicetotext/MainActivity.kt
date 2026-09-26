@@ -142,11 +142,17 @@ class MainActivity : ComponentActivity() {
         this, Manifest.permission.RECORD_AUDIO
     ) == PackageManager.PERMISSION_GRANTED
 
+    /** Before Android 13 a notification needs no prompt. */
+    private fun notificationsGranted() = Build.VERSION.SDK_INT < 33 || ContextCompat.checkSelfPermission(
+        this, Manifest.permission.POST_NOTIFICATIONS
+    ) == PackageManager.PERMISSION_GRANTED
+
     private fun screenState(): ScreenState {
         if (tick < 0) error("unreachable")     // reading tick makes a bump recompose the screen
         val files = Recognizer.filesPresent(this)
         return ScreenState(
             mic = micGranted(),
+            notifications = notificationsGranted(),
             overlay = Settings.canDrawOverlays(this),
             accessibility = TypingAccessibilityService.enabled,
             filesPresent = files,
@@ -162,6 +168,7 @@ class MainActivity : ComponentActivity() {
             personalKey = Recognizer.selectedPersonal(this)?.key ?: "",
             loadedModel = if (Recognizer.ready) Recognizer.label(null) else null,
             personalMissingMb = ModelDownloader.missingPersonal(this).sumOf { it.bytes } / 1_000_000,
+            nikoletaMissingMb = ModelDownloader.missingNikoleta(this).sumOf { it.bytes } / 1_000_000,
             llmOn = LlmCorrector.enabled,
             llmProvider = LlmCorrector.provider,
             llmKeys = LlmCorrector.Provider.entries.filter { LlmCorrector.hasKey(it) }.toSet(),
@@ -183,6 +190,7 @@ class MainActivity : ComponentActivity() {
 
     private val actions = object : MainActions {
         override fun askMic() {
+            // one prompt: the microphone, and (from Android 13) the notification the bubble needs
             val perms = mutableListOf(Manifest.permission.RECORD_AUDIO)
             if (Build.VERSION.SDK_INT >= 33) perms += Manifest.permission.POST_NOTIFICATIONS
             askPermissions.launch(perms.toTypedArray())
@@ -246,8 +254,21 @@ class MainActivity : ComponentActivity() {
 
         override fun cancelDownload() { ModelDownloader.cancel(); tick++ }
 
+        override fun downloadTestWav() {
+            ModelDownloader.startTestWav(this@MainActivity) { lifecycleScope.launch { tick++ } }
+        }
+
         override fun downloadPersonal() {
             ModelDownloader.startPersonal(this@MainActivity) { ok ->
+                lifecycleScope.launch {
+                    if (ok) { Recognizer.dropAcoustic(); reloadBubble() }
+                    tick++
+                }
+            }
+        }
+
+        override fun downloadNikoleta() {
+            ModelDownloader.startNikoleta(this@MainActivity) { ok ->
                 lifecycleScope.launch {
                     if (ok) { Recognizer.dropAcoustic(); reloadBubble() }
                     tick++

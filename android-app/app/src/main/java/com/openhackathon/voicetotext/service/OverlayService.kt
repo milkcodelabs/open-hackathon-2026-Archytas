@@ -32,7 +32,9 @@ import android.text.TextUtils
 import android.util.DisplayMetrics
 import android.util.TypedValue
 import android.util.Log
+import android.media.AudioAttributes
 import android.media.AudioManager
+import android.media.MediaPlayer
 import android.view.Gravity
 import android.view.HapticFeedbackConstants
 import android.view.KeyEvent
@@ -237,7 +239,8 @@ class OverlayService : Service() {
         main.removeCallbacks(longPress)
         main.removeCallbacks(pttStart)
         main.removeCallbacks(retractSatellite)
-        if (state == State.LISTENING) runCatching { recorder.stop() }
+        if (state == State.LISTENING && testPlayer == null) runCatching { recorder.stop() }
+        releaseTestPlayer()
         runCatching { wm.removeView(root) }
         super.onDestroy()
     }
@@ -1222,7 +1225,8 @@ class OverlayService : Service() {
                 LlmCorrector.warmUp(this)
                 setState(State.LISTENING)
             }.onFailure { toast("Μικρόφωνο: $it"); updateOptions() }
-            State.LISTENING -> transcribe(recorder.stop(), "mic")
+            // a test clip is playing: the model starts only when it finishes
+            State.LISTENING -> if (testPlayer == null) transcribe(recorder.stop(), "mic")
             State.THINKING -> {}
         }
     }
@@ -1287,11 +1291,51 @@ class OverlayService : Service() {
         )
     }
 
+    /** Playing test.wav out loud; the recognizer must not start until this finishes. */
+    private var testPlayer: MediaPlayer? = null
+
     private fun onLongPress() {
-        if (state != State.IDLE) return
+        if (state != State.IDLE || testPlayer != null) return
         val f = Recognizer.testWav(this)
         if (!f.exists()) { toast("Δεν υπάρχει test.wav"); return }
-        transcribe(AudioRecorder.readWav(f), f.name)
+        val player = MediaPlayer()
+        val started = runCatching {
+            player.setAudioAttributes(
+                AudioAttributes.Builder()
+                    .setUsage(AudioAttributes.USAGE_MEDIA)
+                    .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
+                    .build()
+            )
+            player.setDataSource(f.absolutePath)
+            player.setOnCompletionListener {
+                main.post {
+                    releaseTestPlayer()
+                    transcribe(AudioRecorder.readWav(f), f.name)
+                }
+            }
+            player.setOnErrorListener { _, _, _ ->
+                main.post {
+                    releaseTestPlayer()
+                    setState(State.IDLE)
+                    toast("Δεν παίζει το test.wav")
+                }
+                true
+            }
+            player.prepare()
+            player.start()
+        }
+        if (started.isFailure) {
+            player.release()
+            toast("Δεν παίζει το test.wav")
+            return
+        }
+        testPlayer = player
+        setState(State.LISTENING)
+    }
+
+    private fun releaseTestPlayer() {
+        testPlayer?.runCatching { reset(); release() }
+        testPlayer = null
     }
 
     private fun transcribe(wav: FloatArray, id: String) {

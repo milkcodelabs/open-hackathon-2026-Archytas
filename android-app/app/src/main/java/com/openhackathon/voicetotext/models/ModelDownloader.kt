@@ -62,8 +62,6 @@ object ModelDownloader {
             "6aac9ba2ea2bec874ed39cbf1c511466cb3e8b1ed2e1105ed100c99bf5242a2b", "λεξιλόγιο νευρωνικού", "gpt2"),
         ModelFile("el_gpt2.merges.txt", 1_377_379L,
             "79b67fa9426a6d70838a23304cea1b5acb0d700e4acf4af9190015a1ca9b2568", "λεξιλόγιο νευρωνικού", "gpt2"),
-        ModelFile("test.wav", 311_098L,
-            "f8c48eadf3625ddf46fedc0521ce688902dcc0f3bd3b821c8581070cc0688afc", "δοκιμαστικός ήχος"),
     )
 
     val totalBytes: Long = FILES.sumOf { it.bytes }
@@ -84,6 +82,18 @@ object ModelDownloader {
     )
 
     val personalBytes: Long = PERSONAL.sumOf { it.bytes }
+
+    /** Second personal model on the same release: omni.personal.s2.*. */
+    val NIKOLETA = listOf(
+        ModelFile("omni.personal.s2.onnx", 356_199_242L,
+            "a34cf06470e1712fbddaa581b03a6c0787961c05b9d499a2ec38c7f775c62381", "μοντέλο Νικολέτας", "nikoleta"),
+        ModelFile("omni.personal.s2.labels.json", 235L,
+            "0098d2e62f383f6cbb9a7450669ce22831b7c32204ab98b96059e52f4dc5d07c", "ετικέτες Νικολέτας", "nikoleta"),
+        ModelFile("omni.personal.s2.json", 205L,
+            "841b3ffe9bf1fb7c638051112e45d70523b7d7a73fbe09b0b535d172625deb56", "περιγραφή Νικολέτας", "nikoleta"),
+    )
+
+    val nikoletaBytes: Long = NIKOLETA.sumOf { it.bytes }
 
     /** A snapshot for the progress bar. [bytesDone] / [bytesTotal] cover only what was missing. */
     data class Progress(
@@ -122,6 +132,9 @@ object ModelDownloader {
     /** The personal model's files that are absent or wrong (the whole group if any is). */
     fun missingPersonal(ctx: Context): List<ModelFile> = missingOf(ctx, PERSONAL)
 
+    /** Nikoleta's model: absent or wrong files, the whole set together. */
+    fun missingNikoleta(ctx: Context): List<ModelFile> = missingOf(ctx, NIKOLETA)
+
     private fun missingOf(ctx: Context, files: List<ModelFile>): List<ModelFile> {
         val bad = files.filter { stale(ctx, it) }.map { it.group }.toSet()
         return files.filter { it.group in bad }
@@ -151,11 +164,34 @@ object ModelDownloader {
         return cm.activeNetwork != null && !cm.isActiveNetworkMetered
     }
 
+    /** Dev only: test.wav from the same release. Not part of [FILES], so the user screen never waits on it. */
+    const val TEST_WAV = "test.wav"
+
+    private val _test = MutableStateFlow(Progress())
+    val testWavProgress: StateFlow<Progress> = _test.asStateFlow()
+
+    /** Downloads [TEST_WAV], whatever size the release currently serves. Resumes a partial copy. */
+    fun startTestWav(ctx: Context, onDone: (Boolean) -> Unit = {}) {
+        if (job?.isActive == true) return
+        val app = ctx.applicationContext
+        job = scope.launch {
+            val ok = runCatching { fetchUnchecked(app, TEST_WAV) { _test.value = it } }
+                .onFailure { e ->
+                    Log.e(TAG, "test.wav failed", e)
+                    _test.value = _test.value.copy(running = false, error = e.message ?: e.toString())
+                }.isSuccess
+            onDone(ok && File(Recognizer.filesRoot(app), TEST_WAV).exists())
+        }
+    }
+
     /** Starts downloading whatever is missing. Does nothing if a download is already running. */
     fun start(ctx: Context, onDone: (Boolean) -> Unit = {}) = run(ctx, { missing(it) }, onDone)
 
     /** Downloads the personal model (on request only). */
     fun startPersonal(ctx: Context, onDone: (Boolean) -> Unit = {}) = run(ctx, { missingPersonal(it) }, onDone)
+
+    /** Downloads Nikoleta's model (on request only, dev screen). */
+    fun startNikoleta(ctx: Context, onDone: (Boolean) -> Unit = {}) = run(ctx, { missingNikoleta(it) }, onDone)
 
     private fun run(ctx: Context, which: (Context) -> List<ModelFile>, onDone: (Boolean) -> Unit) {
         if (job?.isActive == true) return
@@ -232,6 +268,10 @@ object ModelDownloader {
                 }
             }
             _progress.value = _progress.value.copy(file = f.name, verifying = true)
+            // shorter than expected means the connection dropped: keep the bytes and resume next time
+            if (part.length() < f.bytes) {
+                throw IllegalStateException("${f.name}: η σύνδεση κόπηκε, η λήψη συνεχίζει από εκεί που σταμάτησε")
+            }
             if (part.length() != f.bytes || sha256(part) != f.sha256) {
                 part.delete()
                 throw IllegalStateException("${f.name}: το αρχείο δεν ταιριάζει με το αναμενόμενο, ξαναδοκίμασε")
@@ -242,6 +282,52 @@ object ModelDownloader {
             Log.i(TAG, "${f.name} ready (${f.bytes} bytes)")
         }
         _progress.value = Progress(running = false, bytesDone = total, bytesTotal = total, finished = true)
+    }
+
+    /**
+     * One release file, with no size or checksum known ahead of time. A dropped connection
+     * leaves `<name>.part` so the next attempt continues.
+     */
+    private suspend fun fetchUnchecked(ctx: Context, name: String, report: (Progress) -> Unit) {
+        val part = File(Recognizer.filesRoot(ctx), "$name.part")
+        val dst = File(Recognizer.filesRoot(ctx), name)
+        Recognizer.filesRoot(ctx).mkdirs()
+        var have = part.length()
+        report(Progress(running = true, file = name, bytesDone = have, bytesTotal = have))
+        val conn = (URL(BASE_URL + name).openConnection() as HttpURLConnection).apply {
+            connectTimeout = 20_000
+            readTimeout = 30_000
+            instanceFollowRedirects = true
+            if (have > 0) setRequestProperty("Range", "bytes=$have-")
+        }
+        try {
+            val code = conn.responseCode
+            if (code == 200 && have > 0) { have = 0; part.delete() }
+            else if (code != 200 && code != 206) {
+                throw IllegalStateException("$name: HTTP $code")
+            }
+            val total = have + conn.contentLengthLong.coerceAtLeast(0)
+            conn.inputStream.use { input ->
+                FileOutputStream(part, have > 0).use { out ->
+                    val buf = ByteArray(64 * 1024)
+                    while (true) {
+                        currentCoroutineContext().ensureActive()
+                        val n = input.read(buf)
+                        if (n < 0) break
+                        out.write(buf, 0, n)
+                        have += n
+                        report(Progress(running = true, file = name, bytesDone = have, bytesTotal = total))
+                    }
+                }
+            }
+        } finally {
+            conn.disconnect()
+        }
+        if (part.length() == 0L) throw IllegalStateException("$name: άδειο αρχείο")
+        dst.delete()
+        if (!part.renameTo(dst)) throw IllegalStateException("$name: δεν αποθηκεύτηκε")
+        report(Progress(running = false, file = name, bytesDone = dst.length(), bytesTotal = dst.length(), finished = true))
+        Log.i(TAG, "$name ready (${dst.length()} bytes)")
     }
 
     private fun sha256(file: File): String {

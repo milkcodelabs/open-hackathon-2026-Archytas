@@ -87,8 +87,8 @@ object Recognizer {
     // ------------------------------------------------------------------ personal models
     //
     // A speaker's fine-tuned Omnilingual lives next to the downloaded one under its own names:
-    // omni.personal.onnx (the one ModelDownloader can fetch) and any omni.personal.<name>.onnx
-    // copied onto the phone, each with <stem>.labels.json and optionally <stem>.json. A model
+    // omni.personal.onnx and omni.personal.<name>.onnx (both fetched from the release, or copied
+    // onto the phone), each with <stem>.labels.json and optionally <stem>.json. A model
     // counts only when BOTH its graph and its labels are present (its labels may list the
     // letters in a different order than the base model's). The screen offers every one found.
 

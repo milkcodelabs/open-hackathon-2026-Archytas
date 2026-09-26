@@ -100,7 +100,8 @@ fun UserScreen(state: ScreenState, actions: MainActions, onDevMode: () -> Unit, 
 @Composable
 private fun UserContent(state: ScreenState, actions: MainActions, onDevMode: () -> Unit, onTraining: () -> Unit) {
     val p by ModelDownloader.progress.collectAsState()
-    val ready = state.mic && state.overlay && state.filesPresent
+    var explain by remember { mutableStateOf<Explain?>(null) }
+    val ready = state.mic && state.notifications && state.overlay && state.filesPresent
     val on = state.bubbleOn
     Column(
         modifier = Modifier
@@ -116,9 +117,9 @@ private fun UserContent(state: ScreenState, actions: MainActions, onDevMode: () 
                 Title(onDevMode)
                 Spacer(Modifier.height(32.dp))
                 Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    Step(1, state.mic, "Μικρόφωνο", "Για να σε ακούει", "Άδεια") { actions.askMic() }
-                    Step(2, state.overlay, "Πάνω από εφαρμογές", "Για το αιωρούμενο κουμπί", "Άδεια") { actions.openOverlaySettings() }
-                    Step(3, state.accessibility, "Γράψιμο σε πεδία", "Γράφει όπου πατάς", "Άνοιγμα") { actions.openAccessibilitySettings() }
+                    Step(1, state.mic && state.notifications, "Μικρόφωνο", "Για να σε ακούει", "Άδεια") { actions.askMic() }
+                    Step(2, state.overlay, "Πάνω από εφαρμογές", "Για το αιωρούμενο κουμπί", "Άδεια") { explain = Explain.OVERLAY }
+                    Step(3, state.accessibility, "Γράψιμο σε πεδία", "Γράφει όπου πατάς", "Άνοιγμα") { explain = Explain.ACCESSIBILITY }
                     Step(
                         4, state.modelsComplete, "Μοντέλα φωνής",
                         when {
@@ -146,7 +147,34 @@ private fun UserContent(state: ScreenState, actions: MainActions, onDevMode: () 
         }
         MainSwitch(on = on, loading = on && !live, enabled = ready || on) { actions.toggleBubble() }
     }
+    explain?.let { which ->
+        AlertDialog(
+            onDismissRequest = { explain = null },
+            title = { Text(if (which == Explain.OVERLAY) "Πάνω από εφαρμογές" else "Γράψιμο σε πεδία") },
+            text = {
+                Text(
+                    if (which == Explain.OVERLAY) {
+                        "Θα ανοίξουν οι ρυθμίσεις. Βρες το Archytas Voice και άνοιξε το «Εμφάνιση πάνω από άλλες εφαρμογές»."
+                    } else {
+                        "Θα ανοίξουν οι ρυθμίσεις προσβασιμότητας. Διάλεξε το Archytas Voice και άνοιξέ το. " +
+                            "Σε Samsung μπορεί πρώτα να ζητηθεί «Να επιτρέπονται οι περιορισμένες ρυθμίσεις» από τις πληροφορίες της εφαρμογής."
+                    },
+                    fontSize = 16.sp,
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    explain = null
+                    if (which == Explain.OVERLAY) actions.openOverlaySettings() else actions.openAccessibilitySettings()
+                }) { Text("Άνοιγμα ρυθμίσεων", fontSize = 16.sp) }
+            },
+            dismissButton = { TextButton(onClick = { explain = null }) { Text("Ακύρωση", fontSize = 16.sp, color = OnMuted) } },
+            containerColor = Surface, titleContentColor = OnBg, textContentColor = OnBg,
+        )
+    }
 }
+
+private enum class Explain { OVERLAY, ACCESSIBILITY }
 
 /**
  * The gear at the top right: a small menu with the initial training. Choosing it first shows
