@@ -31,7 +31,10 @@ import android.os.SystemClock
 import android.text.TextUtils
 import android.util.DisplayMetrics
 import android.util.Log
+import android.media.AudioManager
 import android.view.Gravity
+import android.view.HapticFeedbackConstants
+import android.view.KeyEvent
 import android.view.LayoutInflater
 import android.view.MotionEvent
 import android.view.View
@@ -225,6 +228,7 @@ class OverlayService : Service() {
         llmPool.shutdownNow()
         main.removeCallbacks(imePoll)
         main.removeCallbacks(longPress)
+        main.removeCallbacks(pttStart)
         main.removeCallbacks(retractSatellite)
         if (state == State.LISTENING) runCatching { recorder.stop() }
         runCatching { wm.removeView(root) }
@@ -1151,40 +1155,64 @@ class OverlayService : Service() {
         }
     }
 
-    /** Whether push-to-talk started the current recording. */
+    /** A volume key is held and listening starts when [pttStart] fires. */
+    private var pttPending = false
+    /** Push-to-talk started the current recording. */
     private var pttActive = false
+    private var pttKey = 0
+    private val pttStart = Runnable {
+        pttPending = false
+        if (state == State.IDLE) {
+            onTap()
+            pttActive = state == State.LISTENING
+            if (pttActive) root.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
+            Log.i(TAG, "push-to-talk: listening=$pttActive")
+        }
+    }
 
     /**
      * Push-to-talk with the volume keys, from [TypingAccessibilityService.onKeyEvent] (main
-     * thread): key down starts listening as a tap on the bubble does, key up recognises.
-     * [heldMs] is the key's own down-to-up time (not when the events reached us). A press
-     * shorter than [PTT_MIN_MS], or one that captured less than that much audio, is dropped
-     * without typing anything. While the bubble is loading or failed the keys stay volume keys.
-     * Returns whether the key was used (then the volume does not change).
+     * thread). Holding a volume key for [PTT_HOLD_MS] starts listening (with a short vibration);
+     * releasing it recognises. A shorter press is an ordinary volume press: the volume is changed
+     * here, since the key was taken. Keys pressed while the bubble is not idle, and while it is
+     * loading or failed, are left to the system. Returns whether the key was used.
      */
-    fun pushToTalk(down: Boolean, repeat: Boolean, heldMs: Long = 0L): Boolean {
-        if (state == State.LOADING || state == State.ERROR) return false
-        if (repeat) return true
+    fun pushToTalk(down: Boolean, repeat: Boolean, keyCode: Int): Boolean {
         if (down) {
-            if (state == State.IDLE) {
-                onTap()
-                pttActive = state == State.LISTENING
-                Log.i(TAG, "push-to-talk down, listening=$pttActive")
-            }
-        } else if (pttActive) {
-            pttActive = false
-            if (state == State.LISTENING) {
-                val pcm = runCatching { recorder.stop() }.getOrNull()
-                val audioMs = (pcm?.size ?: 0) * 1000L / AudioRecorder.SAMPLE_RATE
-                Log.i(TAG, "push-to-talk up: held $heldMs ms, audio $audioMs ms")
-                if (pcm == null || heldMs < PTT_MIN_MS || audioMs < PTT_MIN_MS) {
-                    setState(State.IDLE)
-                    updateOptions()
-                    toast("Κράτα πατημένο το πλήκτρο έντασης όσο μιλάς.")
-                } else transcribe(pcm, "ptt")
-            }
+            if (pttPending || pttActive) return true
+            if (repeat || state != State.IDLE) return false
+            pttPending = true
+            pttKey = keyCode
+            main.postDelayed(pttStart, PTT_HOLD_MS)
+            return true
+        }
+        if (pttPending) {
+            main.removeCallbacks(pttStart)
+            pttPending = false
+            adjustVolume(pttKey)
+            return true
+        }
+        if (!pttActive) return false
+        pttActive = false
+        if (state == State.LISTENING) {
+            val pcm = runCatching { recorder.stop() }.getOrNull()
+            val audioMs = (pcm?.size ?: 0) * 1000L / AudioRecorder.SAMPLE_RATE
+            Log.i(TAG, "push-to-talk up: audio $audioMs ms")
+            if (pcm == null || audioMs < PTT_MIN_AUDIO_MS) {
+                setState(State.IDLE)
+                updateOptions()
+                toast("Μίλα αφού νιώσεις τη δόνηση, κρατώντας το πλήκτρο.")
+            } else transcribe(pcm, "ptt")
         }
         return true
+    }
+
+    private fun adjustVolume(keyCode: Int) {
+        val am = getSystemService(Context.AUDIO_SERVICE) as AudioManager
+        am.adjustSuggestedStreamVolume(
+            if (keyCode == KeyEvent.KEYCODE_VOLUME_UP) AudioManager.ADJUST_RAISE else AudioManager.ADJUST_LOWER,
+            AudioManager.USE_DEFAULT_STREAM_TYPE, AudioManager.FLAG_SHOW_UI,
+        )
     }
 
     private fun onLongPress() {
@@ -1337,7 +1365,9 @@ class OverlayService : Service() {
         val ready: StateFlow<Boolean> = readyFlow.asStateFlow()
         /** The running bubble, for push-to-talk from the accessibility service. */
         @Volatile var instance: OverlayService? = null
-        /** A volume-key press (or its audio) shorter than this is not a dictation. */
-        private const val PTT_MIN_MS = 1_500L
+        /** How long a volume key must be held before push-to-talk starts listening. */
+        private const val PTT_HOLD_MS = 1_500L
+        /** Less audio than this after the vibration is not a dictation. */
+        private const val PTT_MIN_AUDIO_MS = 500L
     }
 }

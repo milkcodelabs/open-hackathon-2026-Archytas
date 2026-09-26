@@ -47,13 +47,13 @@ class TypingAccessibilityService : AccessibilityService() {
         Log.i(TAG, "connected")
     }
 
-    /** Volume up/down are push-to-talk while the floating bubble is on (OverlayService.pushToTalk). */
+    /** Volume up/down held 1.5 s are push-to-talk while the floating bubble is on (OverlayService.pushToTalk). */
     override fun onKeyEvent(event: KeyEvent): Boolean {
         if (event.keyCode != KeyEvent.KEYCODE_VOLUME_UP && event.keyCode != KeyEvent.KEYCODE_VOLUME_DOWN) return false
         val bubble = OverlayService.instance ?: return false
         return when (event.action) {
-            KeyEvent.ACTION_DOWN -> bubble.pushToTalk(down = true, repeat = event.repeatCount > 0)
-            KeyEvent.ACTION_UP -> bubble.pushToTalk(down = false, repeat = false, heldMs = event.eventTime - event.downTime)
+            KeyEvent.ACTION_DOWN -> bubble.pushToTalk(down = true, repeat = event.repeatCount > 0, keyCode = event.keyCode)
+            KeyEvent.ACTION_UP -> bubble.pushToTalk(down = false, repeat = false, keyCode = event.keyCode)
             else -> false
         }
     }
