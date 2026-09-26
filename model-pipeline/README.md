@@ -100,7 +100,7 @@ before feeding it, like `OmniOnnxEmitter`.
    Python beam search).
 4. **Phone format** (`voicetotext lm export-phone <name>.arpa el_3gram.gvtlm`): KenLM's
    binary is a C++ trie, so the ARPA is rewritten as sorted arrays that `NgramLm.kt`
-   memory-maps and binary-searches (layout in `export_lm.py`). The published file: order
+   memory-maps and binary-searches (layout in `export_lm.py`; the file starts with `NGRAM1`). The homophone index starts with `HOMIDX1`. The published file: order
    3, 300,003 words (300k plus `<s>`, `</s>`, `<unk>`), 2,997,665 bigrams, 3,173,808
    trigrams, 95 MB. The app's lookup and backoff (`NgramLm.kt`) were checked against an
    unquantized KenLM binary on 3,000 real lookups: identical scores. The same KenLM binary

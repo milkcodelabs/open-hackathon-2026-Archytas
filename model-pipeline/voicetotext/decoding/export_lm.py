@@ -8,7 +8,7 @@ it came from.
 
 Layout, all little-endian:
 
-    magic "GVTLM1\0\0"        8 bytes
+    magic "NGRAM1\0\0"        8 bytes
     order, vocabSize           2 x int32
     counts[order]              int32 each
     vocabBlobLength            int32
@@ -31,7 +31,7 @@ from pathlib import Path
 
 log = logging.getLogger("voicetotext.lm.export")
 
-MAGIC = b"GVTLM1" + bytes(2)
+MAGIC = b"NGRAM1" + bytes(2)
 END = chr(92) + "end" + chr(92)
 ID_BITS = 21
 MAX_VOCAB = 1 << ID_BITS

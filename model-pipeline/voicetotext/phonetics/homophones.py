@@ -19,7 +19,7 @@ Sound key rules, in order (SoundKey.kt implements the same rules and must stay i
 
 File layout, all little-endian:
 
-    magic "GVTHOM1\\0"               8 bytes
+    magic "HOMIDX1\\0"               8 bytes
     n                                int32, number of sound keys
     keyOffsets[n + 1]                int32 each, byte offsets into the key blob
     valueOffsets[n + 1]              int32 each, byte offsets into the value blob
@@ -46,7 +46,7 @@ _DIGRAPHS = (("αυ", "av"), ("ευ", "ev"), ("ηυ", "iv"),
              ("ει", "i"), ("οι", "i"), ("υι", "i"), ("αι", "e"), ("ου", "u"))
 _SINGLES = str.maketrans({"ι": "i", "η": "i", "υ": "i", _LONE_I: "i", "ο": "o", "ω": "o", "ε": "e", "ς": "σ"})
 _DOUBLES = "λμνπρστκβφθχδζξψ"
-MAGIC = b"GVTHOM1\x00"
+MAGIC = b"HOMIDX1\x00"
 
 
 def sound_key(word: str) -> str:
