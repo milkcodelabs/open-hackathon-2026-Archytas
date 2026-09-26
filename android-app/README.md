@@ -8,9 +8,9 @@ Audio never leaves the device; the network is used only once, to download the mo
 
 - **Layer 1, acoustic model (CTC):** Meta Omnilingual ASR CTC 300M, int8, restricted to the
   39 Greek symbols inside the model file (`omni.onnx`). It outputs a probability for every
-  Greek letter every 20 ms. wav2vec2 Greek can be picked instead in the app.
+  Greek letter every 20 ms.
 - **Layer 2a, beam search + Greek 3-gram language model** (`decoding/BeamSearch.kt`,
-  `el_3gram.gvtlm`, 300k words): turns the letter probabilities into the most likely
+  `el_3gram.ngram`, 300k words): turns the letter probabilities into the most likely
   sentences. It continues the text already in the field and knows the speaker's own words
   from `my_words.txt`.
 - **Layer 2b, spelling** (`decoding/SpellingRescorer.kt`, `el_homophones.bin`): the acoustic
@@ -52,7 +52,7 @@ push them over USB:
 |---|---:|---|
 | `omni.onnx` | 365 MB | layer 1, Omnilingual CTC 300M (default engine) |
 | `omni.labels.json` | 1 KB | its 39 Greek labels |
-| `el_3gram.gvtlm` | 95 MB | layer 2a, Greek language model |
+| `el_3gram.ngram` | 95 MB | layer 2a, Greek language model |
 | `el_homophones.bin` | 10 MB | layer 2b, sound -> spellings index |
 | `test.wav` | 0.3 MB | optional, for the in-app test button |
 | `my_words.txt` | tiny | optional, the speaker's names and words, one per line |

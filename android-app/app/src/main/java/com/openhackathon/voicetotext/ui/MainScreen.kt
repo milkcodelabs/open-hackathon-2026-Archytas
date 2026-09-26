@@ -92,7 +92,6 @@ data class ScreenState(
     val filesPresent: Boolean,
     val modelLabel: String,
     val modelMb: Long,
-    val engine: Recognizer.Engine,
     val lmPresent: Boolean,
     val lmOn: Boolean,
     val lmMb: Long,
@@ -131,7 +130,6 @@ interface MainActions {
     fun toggleBubble()
     fun toggleRecording()
     fun importFiles()
-    fun selectEngine(e: Recognizer.Engine)
     fun setLanguageModel(on: Boolean)
     fun setNeuralLm(on: Boolean)
     fun setPersonal(on: Boolean)
@@ -433,37 +431,15 @@ private fun remaining(seconds: Long): String = when {
 @Composable
 private fun EngineCard(state: ScreenState, actions: MainActions) {
     Section("Μοντέλο αναγνώρισης") {
-        val options = listOf(
-            Recognizer.Engine.OMNI to "Omnilingual",
-            Recognizer.Engine.CTC to "wav2vec2",
-        )
-        SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
-            options.forEachIndexed { i, (e, label) ->
-                SegmentedButton(
-                    selected = state.engine == e,
-                    onClick = { actions.selectEngine(e) },
-                    shape = SegmentedButtonDefaults.itemShape(i, options.size),
-                    modifier = Modifier.height(54.dp),
-                ) { Text(label, fontSize = 14.sp, maxLines = 1) }
-            }
-        }
-        Spacer(Modifier.height(10.dp))
         StatusRow(
             ok = state.filesPresent,
             text = if (state.filesPresent) "${state.modelLabel}: ${state.modelMb} MB" else "Λείπει το ${state.modelLabel}",
         )
         Text(
-            when (state.engine) {
-                Recognizer.Engine.OMNI ->
-                    "Το κύριο μοντέλο. Τρεις φορές λιγότερα λάθη από το wav2vec2 σε " +
-                        "καθημερινή ομιλία (FLEURS)."
-                Recognizer.Engine.CTC ->
-                    "Ελληνικό wav2vec2. Καλύτερο σε ηχογραφήσεις τύπου Common Voice, " +
-                        "λιγότερο ακριβές σε καθημερινή ομιλία."
-            },
+            "Meta Omnilingual CTC 300M, μόνο με τα ελληνικά γράμματα. Τρέχει όλο στο κινητό.",
             fontSize = 14.sp, color = OnMuted, modifier = Modifier.padding(top = 8.dp),
         )
-        if (state.engine == Recognizer.Engine.OMNI && state.personalPresent) {
+        if (state.personalPresent) {
             Spacer(Modifier.height(12.dp))
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Column(Modifier.weight(1f)) {
@@ -485,7 +461,7 @@ private fun EngineCard(state: ScreenState, actions: MainActions) {
                     Text("Γλωσσικό μοντέλο", fontSize = 16.sp, color = OnBg)
                     Text(
                         when {
-                            !state.lmPresent -> "Λείπει το el_3gram.gvtlm"
+                            !state.lmPresent -> "Λείπει το el_3gram.ngram"
                             state.lmOn -> "Ενεργό, ${state.lmMb} MB. Διορθώνει λέξεις που ακούστηκαν σωστά."
                             else -> "Ανενεργό. Καθαρή ακουστική έξοδος."
                         },

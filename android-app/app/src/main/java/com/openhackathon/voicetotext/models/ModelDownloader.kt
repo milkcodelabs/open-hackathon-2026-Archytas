@@ -46,13 +46,13 @@ object ModelDownloader {
      */
     class ModelFile(val name: String, val bytes: Long, val sha256: String, val what: String, val group: String = name)
 
-    /** What the default engine (Omnilingual + layer 2) needs. wav2vec2 stays optional (import). */
+    /** What the app needs: Omnilingual (layer 1) and layer 2. */
     val FILES = listOf(
         ModelFile("omni.onnx", 365_353_615L,
             "6ae7949b48ecc0658970a473e4c1526544b206464aa8682e8a5e24f04ac66798", "ακουστικό μοντέλο", "omni"),
         ModelFile("omni.labels.json", 235L,
             "97cc3eb93df00bc5c144c09d29432d441b6b575e6cf865e5625cefbccdb823e3", "ετικέτες", "omni"),
-        ModelFile("el_3gram.gvtlm", 94_892_390L,
+        ModelFile("el_3gram.ngram", 94_892_390L,
             "ef3c02e4ea8c33ce45220664b8111d6840f7f66bcc97e4bd4f138fd10eb7361a", "γλωσσικό μοντέλο"),
         ModelFile("el_homophones.bin", 10_498_299L,
             "6ef093b3aa9efd8a3d3beba1c24f781ee02d84f64348104d52d150aedb5eef2e", "ορθογραφία"),
@@ -137,7 +137,7 @@ object ModelDownloader {
     }
 
     private val HEADER = mapOf(
-        "el_3gram.gvtlm" to "NGRAM1\u0000\u0000".toByteArray(Charsets.US_ASCII),
+        "el_3gram.ngram" to "NGRAM1\u0000\u0000".toByteArray(Charsets.US_ASCII),
         "el_homophones.bin" to "HOMIDX1\u0000".toByteArray(Charsets.US_ASCII),
     )
 

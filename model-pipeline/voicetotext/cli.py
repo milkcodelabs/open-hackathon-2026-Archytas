@@ -345,7 +345,7 @@ def lm_build(
 @lm_app.command("export-phone")
 def lm_export_phone(
     arpa: Path = typer.Argument(..., exists=True, help="ARPA written by `lm build` (order <= 3)."),
-    out: Path = typer.Argument(..., help="Output file, e.g. el_3gram.gvtlm."),
+    out: Path = typer.Argument(..., help="Output file, e.g. el_3gram.ngram."),
 ) -> None:
     """Write the ARPA as the sorted-array format the app memory-maps (NgramLm.kt)."""
     import json

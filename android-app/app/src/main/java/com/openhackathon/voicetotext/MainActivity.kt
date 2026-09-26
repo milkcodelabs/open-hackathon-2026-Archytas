@@ -57,7 +57,7 @@ class MainActivity : ComponentActivity() {
 
     /**
      * Copies model files the user picks into the app's own directory: the fallback when the
-     * phone cannot download them, and the way to add wav2vec2 or my_words.txt.
+     * phone cannot download them, and the way to add a personal model or my_words.txt.
      */
     private val importFiles =
         registerForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
@@ -66,8 +66,7 @@ class MainActivity : ComponentActivity() {
                 busy = true
                 val done = withContext(Dispatchers.IO) { uris.mapNotNull { copyIn(it) } }
                 busy = false
-                Recognizer.releaseUnused()
-                if (done.any { it.startsWith("omni.personal") }) { Recognizer.dropAcoustic(); reloadBubble() }
+                if (done.any { it.startsWith("omni.") }) { Recognizer.dropAcoustic(); reloadBubble() }
                 if (done.any { it in LAYER2_FILES }) withContext(Dispatchers.Default) { Recognizer.reloadLayer2(this@MainActivity) }
                 result = if (done.isEmpty()) "Δεν αντιγράφηκε τίποτα" else "Εισήχθησαν: " + done.joinToString(", ")
                 tick++
@@ -75,7 +74,7 @@ class MainActivity : ComponentActivity() {
         }
 
     /** Files whose import changes layer 2 (language model, spellings, the speaker's words). */
-    private val LAYER2_FILES = setOf("el_3gram.gvtlm", "el_homophones.bin", "my_words.txt")
+    private val LAYER2_FILES = setOf("el_3gram.ngram", "el_homophones.bin", "my_words.txt")
 
     /** Every model file sits at the top level of the app's files folder. */
     private fun copyIn(uri: Uri): String? {
@@ -95,7 +94,7 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
-        Recognizer.restoreEngine(this)
+        Recognizer.restoreSettings(this)
         LlmCorrector.restore(this)
 
         // Models missing and on Wi-Fi: fetch them straight away. On mobile data, wait for
@@ -132,7 +131,6 @@ class MainActivity : ComponentActivity() {
             filesPresent = files,
             modelLabel = Recognizer.label(this),
             modelMb = if (files) Recognizer.sizeMb(this) else 0,
-            engine = Recognizer.engine,
             lmPresent = Recognizer.lmPresent(this),
             lmOn = Recognizer.useLanguageModel,
             lmMb = Recognizer.lmSizeMb(this),
@@ -189,18 +187,9 @@ class MainActivity : ComponentActivity() {
 
         override fun importFiles() = importFiles.launch(arrayOf("*/*"))
 
-        override fun selectEngine(e: Recognizer.Engine) {
-            if (e == Recognizer.engine) return
-            Recognizer.setEngine(this@MainActivity, e)
-            Recognizer.releaseUnused()
-            reloadBubble()
-            tick++
-        }
-
         override fun setLanguageModel(on: Boolean) {
             if (on == Recognizer.useLanguageModel) return
             Recognizer.setUseLanguageModel(this@MainActivity, on)
-            Recognizer.releaseUnused()
             reloadBubble()
             tick++
         }
@@ -257,7 +246,6 @@ class MainActivity : ComponentActivity() {
         ModelDownloader.start(this) { ok ->
             lifecycleScope.launch {
                 if (ok) {
-                    Recognizer.releaseUnused()
                     withContext(Dispatchers.Default) { Recognizer.reloadLayer2(this@MainActivity) }
                     reloadBubble()
                 }

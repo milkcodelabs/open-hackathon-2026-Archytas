@@ -1,8 +1,8 @@
-# The 3-gram the app ships as el_3gram.gvtlm: 300k-word vocabulary, lmplz --prune 0 2 4.
+# The 3-gram the app ships as el_3gram.ngram: 300k-word vocabulary, lmplz --prune 0 2 4.
 # The published file holds 300,003 words (the 300k plus <s>, </s>, <unk>), 2,997,665 bigrams
 # and 3,173,808 trigrams.
 #   voicetotext lm build -c configs/lm_phone.yaml --name el_3gram_300k --opensubtitles ... --wikipedia ...
-#   voicetotext lm export-phone ~/voicetotext_data/lm/el_3gram_300k.arpa el_3gram.gvtlm
+#   voicetotext lm export-phone ~/voicetotext_data/lm/el_3gram_300k.arpa el_3gram.ngram
 lm:
   order: 3
   vocab_size: 300000

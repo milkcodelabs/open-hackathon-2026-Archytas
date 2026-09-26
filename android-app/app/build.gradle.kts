@@ -61,7 +61,7 @@ dependencies {
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.lifecycle.runtime.ktx)
     implementation(libs.kotlinx.coroutines.android)
-    // CPU-only ONNX Runtime: the acoustic models (Omnilingual CTC / wav2vec2) and the GPT-2 rescorer
+    // CPU-only ONNX Runtime: the acoustic model (Omnilingual CTC) and the GPT-2 rescorer
     implementation(libs.onnxruntime.android)
     testImplementation(libs.junit)
     androidTestImplementation(platform(libs.androidx.compose.bom))
