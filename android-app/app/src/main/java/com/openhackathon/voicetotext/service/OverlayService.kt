@@ -1338,6 +1338,6 @@ class OverlayService : Service() {
         /** The running bubble, for push-to-talk from the accessibility service. */
         @Volatile var instance: OverlayService? = null
         /** A volume-key press (or its audio) shorter than this is not a dictation. */
-        private const val PTT_MIN_MS = 600L
+        private const val PTT_MIN_MS = 1_500L
     }
 }
