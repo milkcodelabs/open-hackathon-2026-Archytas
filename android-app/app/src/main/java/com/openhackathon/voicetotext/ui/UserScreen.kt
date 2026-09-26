@@ -1,7 +1,9 @@
 package com.openhackathon.voicetotext.ui
 
 import androidx.compose.foundation.background
-import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.waitForUpOrCancellation
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -50,14 +52,16 @@ import java.util.Locale
 
 /** Text on this screen grows with the system font size up to this factor, so it always fits. */
 private const val MAX_FONT_SCALE = 1.15f
+/** How long the title must be held down to open dev mode. */
+private const val DEV_HOLD_MS = 6_000L
 
 /**
  * What everyone sees: one screen that fits without scrolling, also with a large system font
- * and display size. The permissions the floating button needs and the models on first start,
- * centred, and at the bottom the switch that shows the button. The steps take only the room
- * above the switch, so the switch is always on screen. Everything else (models, layer 2,
- * analysis, the in-app microphone) is dev mode, opened by a long press anywhere on the screen
- * outside the buttons.
+ * and display size. The title, the permissions the floating button needs and the models on
+ * first start, and at the bottom the switch that shows the button. The steps take only the
+ * room between the title and the switch, so the switch is always on screen. Everything else
+ * (models, layer 2, analysis, the in-app microphone) is dev mode, opened by holding the title
+ * down for [DEV_HOLD_MS]; lifting or dragging earlier does nothing.
  */
 @Composable
 fun UserScreen(state: ScreenState, actions: MainActions, onDevMode: () -> Unit) {
@@ -77,10 +81,19 @@ private fun UserContent(state: ScreenState, actions: MainActions, onDevMode: () 
             .fillMaxSize()
             .background(Bg)
             .safeDrawingPadding()
-            .pointerInput(Unit) { detectTapGestures(onLongPress = { onDevMode() }) }
             .padding(start = 18.dp, end = 18.dp, top = 16.dp, bottom = 6.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
+        Text(
+            "Archytas Voice", fontSize = 30.sp, fontWeight = FontWeight.Bold, color = OnBg, maxLines = 1,
+            modifier = Modifier.pointerInput(Unit) {
+                awaitEachGesture {
+                    awaitFirstDown()
+                    // null only when the time runs out with the finger still down
+                    if (withTimeoutOrNull(DEV_HOLD_MS) { waitForUpOrCancellation(); true } == null) onDevMode()
+                }
+            },
+        )
         Column(
             modifier = Modifier.weight(1f).fillMaxWidth().padding(vertical = 12.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp, Alignment.CenterVertically),
