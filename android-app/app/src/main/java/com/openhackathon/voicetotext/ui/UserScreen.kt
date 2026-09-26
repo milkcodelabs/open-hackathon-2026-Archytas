@@ -21,7 +21,12 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.Text
@@ -29,6 +34,9 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -100,6 +108,7 @@ private fun UserContent(state: ScreenState, actions: MainActions, onDevMode: () 
             .padding(start = 18.dp, end = 18.dp, top = 12.dp, bottom = 6.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
+        SettingsMenu(onTraining)
         Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
                 Title(onDevMode)
@@ -131,19 +140,48 @@ private fun UserContent(state: ScreenState, actions: MainActions, onDevMode: () 
                 Text("Ενεργό", fontSize = 16.sp, fontWeight = FontWeight.SemiBold, color = Ok)
             }
         }
-        Row(
-            horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically,
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(bottom = 10.dp)
-                .height(54.dp)
-                .clip(RoundedCornerShape(20.dp))
-                .border(1.5.dp, BrandLight.copy(alpha = 0.6f), RoundedCornerShape(20.dp))
-                .clickable(role = Role.Button, onClick = onTraining),
-        ) {
-            Text("Αρχική εκπαίδευση", fontSize = 18.sp, fontWeight = FontWeight.SemiBold, color = BrandLight, maxLines = 1)
-        }
         MainSwitch(on = on, enabled = ready || on) { actions.toggleBubble() }
+    }
+}
+
+/**
+ * The gear at the top right: a small menu with the initial training. Choosing it first shows
+ * a notice that the training is a mock (the takes are saved on the phone, nothing is sent,
+ * they can be deleted at the end); only "Συνέχεια" opens the recording screen.
+ */
+@Composable
+private fun SettingsMenu(onTraining: () -> Unit) {
+    var open by remember { mutableStateOf(false) }
+    var notice by remember { mutableStateOf(false) }
+    Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.TopEnd) {
+        Box {
+            IconButton(onClick = { open = true }) {
+                Icon(painterResource(R.drawable.ic_settings), contentDescription = "ρυθμίσεις", tint = OnMuted, modifier = Modifier.size(28.dp))
+            }
+            DropdownMenu(expanded = open, onDismissRequest = { open = false }, containerColor = Surface) {
+                DropdownMenuItem(
+                    text = { Text("Αρχική εκπαίδευση", fontSize = 17.sp, color = OnBg) },
+                    onClick = { open = false; notice = true },
+                )
+            }
+        }
+    }
+    if (notice) {
+        AlertDialog(
+            onDismissRequest = { notice = false },
+            title = { Text("Δοκιμαστική λειτουργία") },
+            text = {
+                Text(
+                    "Η αρχική εκπαίδευση είναι προς το παρόν επίδειξη (mock). Οι ηχογραφήσεις αποθηκεύονται " +
+                        "κανονικά στο κινητό, αλλά δεν στέλνονται για εκπαίδευση και δεν αλλάζουν το μοντέλο. " +
+                        "Στο τέλος μπορείς να τις διαγράψεις, για να μην πιάνουν χώρο.",
+                    fontSize = 16.sp,
+                )
+            },
+            confirmButton = { TextButton(onClick = { notice = false; onTraining() }) { Text("Συνέχεια", fontSize = 16.sp) } },
+            dismissButton = { TextButton(onClick = { notice = false }) { Text("Ακύρωση", fontSize = 16.sp, color = OnMuted) } },
+            containerColor = Surface, titleContentColor = OnBg, textContentColor = OnBg,
+        )
     }
 }
 
