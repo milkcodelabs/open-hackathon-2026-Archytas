@@ -26,6 +26,7 @@ import com.openhackathon.voicetotext.service.OverlayService
 import com.openhackathon.voicetotext.service.TypingAccessibilityService
 import com.openhackathon.voicetotext.ui.MainActions
 import com.openhackathon.voicetotext.ui.MainScreen
+import com.openhackathon.voicetotext.ui.PersonalChoice
 import com.openhackathon.voicetotext.ui.ScreenState
 import com.openhackathon.voicetotext.ui.theme.VoicetotextTheme
 import kotlinx.coroutines.Dispatchers
@@ -137,10 +138,8 @@ class MainActivity : ComponentActivity() {
             neuralPresent = Recognizer.neuralPresent(this),
             neuralOn = Recognizer.useNeuralLm,
             neuralMb = Recognizer.neuralSizeMb(this),
-            personalPresent = Recognizer.personalPresent(this),
-            personalOn = Recognizer.usePersonal,
-            personalMb = Recognizer.personalSizeMb(this),
-            personalInfo = Recognizer.personalInfo(this),
+            personals = Recognizer.personalModels(this).map { PersonalChoice(it.key, it.title, it.sizeMb, it.info) },
+            personalKey = Recognizer.selectedPersonal(this)?.key ?: "",
             personalMissingMb = ModelDownloader.missingPersonal(this).sumOf { it.bytes } / 1_000_000,
             llmOn = LlmCorrector.enabled,
             llmProvider = LlmCorrector.provider,
@@ -213,9 +212,9 @@ class MainActivity : ComponentActivity() {
             tick++
         }
 
-        override fun setPersonal(on: Boolean) {
-            if (on == Recognizer.usePersonal) return
-            Recognizer.setUsePersonal(this@MainActivity, on)
+        override fun selectPersonal(key: String) {
+            if (key == Recognizer.personalKey) return
+            Recognizer.setPersonal(this@MainActivity, key)
             reloadBubble()
             tick++
         }

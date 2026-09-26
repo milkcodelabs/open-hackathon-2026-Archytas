@@ -84,6 +84,9 @@ import com.openhackathon.voicetotext.ui.theme.SurfaceSoft
 import com.openhackathon.voicetotext.ui.theme.Thinking
 import java.util.Locale
 
+/** One personal acoustic model on the phone, as the screen shows it. */
+data class PersonalChoice(val key: String, val title: String, val mb: Long, val info: String)
+
 /** Everything the screen shows, read once per recomposition by MainActivity. */
 data class ScreenState(
     val mic: Boolean,
@@ -98,10 +101,9 @@ data class ScreenState(
     val neuralPresent: Boolean,
     val neuralOn: Boolean,
     val neuralMb: Long,
-    val personalPresent: Boolean,
-    val personalOn: Boolean,
-    val personalMb: Long,
-    val personalInfo: String,
+    /** The personal models on the phone; [personalKey] is the one in use ("" = the general model). */
+    val personals: List<PersonalChoice>,
+    val personalKey: String,
     /** MB of the personal model still to download (0 when it is complete on the phone). */
     val personalMissingMb: Long,
     val llmOn: Boolean,
@@ -132,7 +134,7 @@ interface MainActions {
     fun importFiles()
     fun setLanguageModel(on: Boolean)
     fun setNeuralLm(on: Boolean)
-    fun setPersonal(on: Boolean)
+    fun selectPersonal(key: String)
     fun setLlm(on: Boolean)
     fun selectLlmProvider(p: LlmCorrector.Provider)
     fun runCheck()
@@ -401,7 +403,7 @@ private fun ModelsCard(state: ScreenState, actions: MainActions) {
         Spacer(Modifier.height(14.dp))
         StatusRow(
             ok = state.personalMissingMb == 0L,
-            text = if (state.personalMissingMb == 0L) "Προσωπικό μοντέλο στο κινητό (${state.personalMb} MB)"
+            text = if (state.personalMissingMb == 0L) "Προσωπικό μοντέλο στο κινητό (${ModelDownloader.personalBytes / 1_000_000} MB)"
             else "Προσωπικό μοντέλο: προαιρετικό",
         )
         if (state.personalMissingMb > 0 && !p.running) {
@@ -410,7 +412,7 @@ private fun ModelsCard(state: ScreenState, actions: MainActions) {
                 onClick = { actions.downloadPersonal() },
                 modifier = Modifier.fillMaxWidth().height(52.dp),
             ) { Text("Λήψη προσωπικού μοντέλου (${state.personalMissingMb} MB)", fontSize = 16.sp) }
-            Text("Εκπαιδευμένο στη φωνή του ομιλητή. Μετά τη λήψη ανοίγει και κλείνει από το «Προσωπικό μοντέλο».",
+            Text("Εκπαιδευμένο στη φωνή του ομιλητή. Μετά τη λήψη διαλέγεται από το «Προσωπικό μοντέλο».",
                 fontSize = 13.sp, color = OnMuted, modifier = Modifier.padding(top = 4.dp))
         }
         Spacer(Modifier.height(8.dp))
@@ -439,20 +441,27 @@ private fun EngineCard(state: ScreenState, actions: MainActions) {
             "Meta Omnilingual CTC 300M, μόνο με τα ελληνικά γράμματα. Τρέχει όλο στο κινητό.",
             fontSize = 14.sp, color = OnMuted, modifier = Modifier.padding(top = 8.dp),
         )
-        if (state.personalPresent) {
+        if (state.personals.isNotEmpty()) {
             Spacer(Modifier.height(12.dp))
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Column(Modifier.weight(1f)) {
-                    Text("Προσωπικό μοντέλο", fontSize = 16.sp, color = OnBg)
-                    Text(
-                        (if (state.personalOn) "Ενεργό, ${state.personalMb} MB: εκπαιδευμένο στη φωνή του ομιλητή."
-                        else "Ανενεργό: χρησιμοποιείται το γενικό Omnilingual.") +
-                            (if (state.personalInfo.isNotBlank()) "\n" + state.personalInfo else ""),
-                        fontSize = 14.sp, color = OnMuted,
-                    )
+            Text("Προσωπικό μοντέλο", fontSize = 16.sp, color = OnBg)
+            Spacer(Modifier.height(6.dp))
+            val options = listOf(PersonalChoice("", "Γενικό", 0, "")) + state.personals
+            SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
+                options.forEachIndexed { i, o ->
+                    SegmentedButton(
+                        selected = state.personalKey == o.key,
+                        onClick = { actions.selectPersonal(o.key) },
+                        shape = SegmentedButtonDefaults.itemShape(i, options.size),
+                        modifier = Modifier.height(54.dp),
+                    ) { Text(o.title, fontSize = 14.sp, maxLines = 1) }
                 }
-                Switch(checked = state.personalOn, onCheckedChange = { actions.setPersonal(it) })
             }
+            val sel = state.personals.find { it.key == state.personalKey }
+            Text(
+                if (sel == null) "Γενικό Omnilingual, για κάθε ομιλητή."
+                else "${sel.mb} MB, εκπαιδευμένο στη φωνή του ομιλητή." + (if (sel.info.isNotBlank()) "\n" + sel.info else ""),
+                fontSize = 14.sp, color = OnMuted, modifier = Modifier.padding(top = 6.dp),
+            )
         }
         run {
             Spacer(Modifier.height(12.dp))
