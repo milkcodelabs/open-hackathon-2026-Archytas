@@ -1,10 +1,16 @@
-"""finetune.py (cells split on '# %%') -> finetune.ipynb for Colab. Stdlib only."""
+"""A notebook script (cells split on '# %%') -> the .ipynb next to it, for Colab. Stdlib only.
+
+    python make_notebook.py                     # finetune.py -> finetune.ipynb
+    python make_notebook.py few_sentences.py    # few_sentences.py -> few_sentences.ipynb
+"""
 
 import json
+import sys
 from pathlib import Path
 
 here = Path(__file__).parent
-src = (here / "finetune.py").read_text(encoding="utf-8")
+script = here / (sys.argv[1] if len(sys.argv) > 1 else "finetune.py")
+src = script.read_text(encoding="utf-8")
 parts = src.split("\n# %%\n")
 cells = []
 header = parts[0].strip()
@@ -16,5 +22,5 @@ for p in parts[1:]:
 nb = {"nbformat": 4, "nbformat_minor": 5, "cells": cells,
       "metadata": {"accelerator": "GPU", "colab": {"provenance": [], "gpuType": "T4"},
                    "kernelspec": {"name": "python3", "display_name": "Python 3"}}}
-(here / "finetune.ipynb").write_text(json.dumps(nb, ensure_ascii=False, indent=1), encoding="utf-8")
-print(len(cells), "cells")
+script.with_suffix(".ipynb").write_text(json.dumps(nb, ensure_ascii=False, indent=1), encoding="utf-8")
+print(script.with_suffix(".ipynb").name, len(cells), "cells")

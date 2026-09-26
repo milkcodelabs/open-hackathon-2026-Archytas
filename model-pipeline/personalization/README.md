@@ -11,8 +11,9 @@ may be a ρ and puts probability on both, and the language model picks the right
 | `recorder.html` | offline recording page: prompts, sessions, export as a ZIP (`metadata.csv` + `wav/`) |
 | `pack_bundle.py` | recordings + evaluation sets + LM + the `voicetotext` package -> `personal_bundle.zip` |
 | `finetune.py` | the training notebook as a script, cells split by `# %%` |
-| `make_notebook.py` | `finetune.py` -> `finetune.ipynb` (stdlib only) |
+| `make_notebook.py` | a notebook script -> its `.ipynb` (stdlib only): `python make_notebook.py [few_sentences.py]` |
 | `finetune.ipynb` | what runs on Colab; regenerate it after editing `finetune.py` |
+| `few_sentences.py`, `few_sentences.ipynb` | the recipe for a handful of recordings (a real speaker, 14 sentences), below |
 
 Recordings and trained weights never go into git. They stay on the recording device, the
 machine that packs the bundle, and the account's own Google Drive.
@@ -51,6 +52,52 @@ same normalization.
   - FLEURS replay alone was not enough. The per-frame KL to the base model on replayed clips is what keeps it in check.
   - What remains is about +3 points on FLEURS and CV. That is why this is a per-speaker model and the general one stays the default.
 - **The useful training is short.** With about 250 clips, dev is best at epoch 7 and drifts upwards afterwards.
+
+## Few sentences: a real speaker with dysarthria (speaker 2)
+
+A person with dysarthria read 15 sentences once each: 82 s of speech after trimming the silence
+(recorded at 48 kHz stereo with identical channels, converted to 16 kHz mono). One sentence is
+the demo, never trained on; the other 14 train. The speech is severely affected: the general
+model gets almost no word right. With so little data the r5 recipe does not carry over, so
+everything below was chosen by **7-fold cross-validation**: each of the 14 sentences is scored
+by a model trained on the other 12, i.e. on a sentence it never heard.
+
+| layer 1 | decoding | WER | CER |
+|---|---|---:|---:|
+| base v2 | beam + 3-gram | 0.92 | 0.74 |
+| LoRA r16, all 24 layers, KD rehearsal (round 1, epoch 6 of 40) | beam + 3-gram | 0.72 | 0.36 |
+| same | beam + GPT-2 (2c) | 0.67 | 0.33 |
+| **same, 10-epoch schedule, checkpoint 4** (two fold draws) | beam + GPT-2 (2c) | **0.66 / 0.69** | **0.34 / 0.36** |
+| top 8 layers (the r5 recipe, lr 3e-5) | beam + 3-gram | 0.90 | 0.63 |
+
+- **LoRA works and the r5 recipe does not.**
+  - LoRA: rank 16 on attention q/k/v/out and both FFN matrices of every layer, plus the CTC head.
+  - Training data per epoch: every speaker clip 10 times, each copy augmented differently (speed 0.8-1.2, noise 15-40 dB SNR, gain ±6 dB, SpecAugment 0.1). Next to them, as many general clips of up to 10 s, with the KL to the base model.
+  - Top-8 fine-tuning at r5's learning rate barely moves. LHUC was not run to the end.
+- **Stop early.** With a 40-epoch schedule the held-out error is lowest at epoch 6-8 and grows after it (memorising 12 sentences). A 10-epoch schedule is flat, and checkpoint 4 is exported.
+- **Decoding side.**
+  - GPT-2 re-ranking (the app's 2c weights) helps.
+  - A heavier n-gram weight hurts: it glues words together.
+  - A confusion transform estimated on the training sentences (e.g. λ -> ρ) gained only 0.01-0.03 and is left out.
+- **Cost on typical speech:** FLEURS dev greedy WER 0.35 -> 0.41. A per-speaker model, like r5.
+- **Per sentence the spread is large.** WER goes from 0.16 to 0.93.
+  - The best is «Προγραμματίζω τις διακοπές μου για τον επόμενο μήνα». It came out word for word in 3 of 4 held-out runs; the base model gives «μα τι τι διακοπτόμενα».
+  - It became the demo after this table, so it shows the best case, and the cross-validated numbers above are the typical one.
+  - The final model, trained on the other 14, writes it exactly, and so does its int8 ONNX.
+
+The measurements above used the float GPT-2 (`lighteternal/gpt2-finetuned-greek`) with the app's weights. `few_sentences.py` uses the release's int8 GPT-2, the one on the phone.
+
+`few_sentences.py` is the cleaned recipe: base model, cross-validation with a per-sentence table, final model, int8 export and the phone files. The comparisons above came from the exploratory notebook it was distilled from, and this form has not been run end to end. It reads the same `personal_bundle.zip`: mark the demo sentence `set=demo` in `metadata.csv`, and set `name` and `speaker` in the config cell.
+
+The release has this model under a pseudonym, and the recordings are not published:
+
+| file | bytes | SHA-256 |
+|---|---:|---|
+| `omni.personal.s2.onnx` | 356,199,242 | `a34cf06470e1712fbddaa581b03a6c0787961c05b9d499a2ec38c7f775c62381` |
+| `omni.personal.s2.labels.json` | 235 | `0098d2e62f383f6cbb9a7450669ce22831b7c32204ab98b96059e52f4dc5d07c` |
+| `omni.personal.s2.json` | 205 | `841b3ffe9bf1fb7c638051112e45d70523b7d7a73fbe09b0b535d172625deb56` |
+
+The app does not download it by itself. Copy the three files over USB or with **Εισαγωγή αρχείων**. The app lists every `omni.personal.<name>.*` it finds, next to `omni.personal.*`, under «Προσωπικό μοντέλο».
 
 ## Recipe (r5)
 
