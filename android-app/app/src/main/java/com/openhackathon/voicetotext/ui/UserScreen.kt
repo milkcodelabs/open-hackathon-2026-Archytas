@@ -8,7 +8,6 @@ import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.waitForUpOrCancellation
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -32,7 +31,6 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -74,10 +72,10 @@ private val CardEdge = Color.White.copy(alpha = 0.06f)
 
 /**
  * What everyone sees: one screen that fits without scrolling, also with a large system font
- * and display size. A centred block with the brand mark, the title and the setup steps (the
- * permissions the floating button needs, the models on first start), and at the bottom the
- * switch that shows the button. The block takes only the room above the switch, so the switch
- * is always on screen; the mark is dropped when that room is short. Everything else (models,
+ * and display size. A centred block with the title and the setup steps (the permissions the
+ * floating button needs, the models on first start), and at the bottom the switch that shows
+ * the button. The block takes only the room above the switch, so the switch is always on
+ * screen. Everything else (models,
  * layer 2, analysis, the in-app microphone) is dev mode, opened by holding the title down for
  * [DEV_HOLD_MS]; lifting or dragging earlier does nothing.
  */
@@ -102,15 +100,10 @@ private fun UserContent(state: ScreenState, actions: MainActions, onDevMode: () 
             .padding(start = 18.dp, end = 18.dp, top = 12.dp, bottom = 6.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
-        BoxWithConstraints(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
-            val roomy = maxHeight > 600.dp
+        Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                if (roomy) {
-                    BrandMark()
-                    Spacer(Modifier.height(18.dp))
-                }
                 Title(onDevMode)
-                Spacer(Modifier.height(if (roomy) 32.dp else 20.dp))
+                Spacer(Modifier.height(32.dp))
                 Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     Step(1, state.mic, "Μικρόφωνο", "Για να σε ακούει", "Άδεια") { actions.askMic() }
                     Step(2, state.overlay, "Πάνω από εφαρμογές", "Για το αιωρούμενο κουμπί", "Άδεια") { actions.openOverlaySettings() }
@@ -139,20 +132,6 @@ private fun UserContent(state: ScreenState, actions: MainActions, onDevMode: () 
             }
         }
         MainSwitch(on = on, enabled = ready || on) { actions.toggleBubble() }
-    }
-}
-
-/** The microphone in a gradient disc with a soft halo. */
-@Composable
-private fun BrandMark() {
-    Box(contentAlignment = Alignment.Center, modifier = Modifier.size(112.dp)) {
-        Box(Modifier.size(112.dp).alpha(0.16f).clip(CircleShape).background(Brush.linearGradient(listOf(Brand, Violet))))
-        Box(
-            contentAlignment = Alignment.Center,
-            modifier = Modifier.size(78.dp).clip(CircleShape).background(Brush.linearGradient(listOf(Brand, Violet))),
-        ) {
-            Icon(painterResource(R.drawable.ic_mic), contentDescription = null, tint = OnBg, modifier = Modifier.size(38.dp))
-        }
     }
 }
 
