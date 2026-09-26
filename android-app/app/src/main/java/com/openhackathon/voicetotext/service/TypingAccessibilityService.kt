@@ -8,6 +8,7 @@ import android.os.Bundle
 import android.util.Log
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
+import kotlin.math.abs
 
 /**
  * Writes recognized text into whichever text field the person was last typing in.
@@ -20,14 +21,25 @@ import android.view.accessibility.AccessibilityNodeInfo
  * It looks at nothing else and stores nothing but that one node reference. The text already
  * in that field (at most the last 200 characters before the cursor) is read at the moment of
  * recognition so the language model can continue the sentence; it is not stored or logged.
- * For undo it also keeps, in memory only, the last few phrases it typed itself.
+ * For undo and corrections it also keeps, in memory only, the last few phrases it typed
+ * itself and where each one went.
+ *
+ * A field's text is always re-read from the app ([AccessibilityNodeInfo.refresh]) before it
+ * is searched or rewritten: the framework's node cache can still hold the text from before
+ * our own insert, and a phrase looked up in that stale copy is never found.
  */
 class TypingAccessibilityService : AccessibilityService() {
 
     @Volatile private var lastEditable: AccessibilityNodeInfo? = null
 
-    /** What each insert put in the field, separator included, newest last; only our own text. */
-    private val injected = ArrayDeque<String>()
+    /**
+     * One phrase this app typed: [text] starts at [at] in [node]'s text, right after the
+     * separator [sep] that was added in front of it. [at] and [text] follow later rewrites.
+     */
+    private class Injection(var node: AccessibilityNodeInfo?, var at: Int, val sep: String, var text: String)
+
+    /** Our own phrases, newest last. */
+    private val injected = ArrayDeque<Injection>()
 
     override fun onServiceConnected() {
         instance = this
@@ -82,12 +94,30 @@ class TypingAccessibilityService : AccessibilityService() {
         return if (runCatching { n.refresh() }.getOrDefault(false) && n.isEditable) n else null
     }
 
-    /** What was added to the field (the separator and [text]), or null if it refused. */
-    private fun append(node: AccessibilityNodeInfo, text: String): String? {
-        val existing = if (node.isShowingHintText) "" else (node.text?.toString() ?: "")
+    /** Fields to try, [first] (where a phrase went) ahead of the focused and remembered ones. */
+    private fun targets(first: AccessibilityNodeInfo? = null): List<Pair<String, AccessibilityNodeInfo>> =
+        listOfNotNull(
+            first?.let { "typed-into" to it },
+            focusedEditable()?.let { "focused" to it },
+            rememberedEditable()?.let { "remembered" to it },
+        ).distinctBy { it.second }
+
+    /** [node]'s text as the app holds it right now ("" while it shows its hint); null if gone. */
+    private fun freshText(node: AccessibilityNodeInfo): String? {
+        if (!runCatching { node.refresh() }.getOrDefault(false) || !node.isEditable) return null
+        return if (node.isShowingHintText) "" else node.text?.toString() ?: ""
+    }
+
+    private fun cursorOf(node: AccessibilityNodeInfo, text: String): Int =
+        node.textSelectionStart.takeIf { it in 0..text.length } ?: text.length
+
+    /** Adds [text] at the end of the field; what was added and where, or null if it refused. */
+    private fun append(node: AccessibilityNodeInfo, text: String): Injection? {
+        val existing = freshText(node) ?: return null
         val sep = if (existing.isEmpty() || existing.endsWith(" ")) "" else " "
         val combined = existing + sep + text
-        return if (setText(node, combined, combined.length)) sep + text else null
+        if (!setText(node, combined, combined.length)) return null
+        return Injection(node, existing.length + sep.length, sep, text)
     }
 
     private fun setText(node: AccessibilityNodeInfo, text: String, cursor: Int): Boolean {
@@ -95,75 +125,75 @@ class TypingAccessibilityService : AccessibilityService() {
             putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, text)
         }
         if (!node.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, args)) return false
-        val sel = Bundle().apply {
-            putInt(AccessibilityNodeInfo.ACTION_ARGUMENT_SELECTION_START_INT, cursor)
-            putInt(AccessibilityNodeInfo.ACTION_ARGUMENT_SELECTION_END_INT, cursor)
-        }
-        node.performAction(AccessibilityNodeInfo.ACTION_SET_SELECTION, sel)
+        select(node, cursor, cursor)
         return true
     }
 
-    /**
-     * Swaps the last occurrence of [old] (what this app typed) for [new], keeping the cursor
-     * where it was relative to the rest of the text, so words typed since then survive.
-     */
-    private fun replace(old: String, new: String): String? {
-        for ((where, node) in listOf("focused" to focusedEditable(), "remembered" to rememberedEditable())) {
-            if (node == null || node.isShowingHintText) continue
-            val text = node.text?.toString() ?: continue
-            val at = text.lastIndexOf(old)
-            if (at < 0) continue
-            val combined = text.substring(0, at) + new + text.substring(at + old.length)
-            val cursor = node.textSelectionStart.takeIf { it in 0..text.length } ?: text.length
-            val moved = when {
-                cursor >= at + old.length -> cursor + new.length - old.length
-                cursor > at -> at + new.length
-                else -> cursor
-            }
-            if (setText(node, combined, moved)) return where
+    private fun select(node: AccessibilityNodeInfo, start: Int, end: Int): Boolean {
+        val sel = Bundle().apply {
+            putInt(AccessibilityNodeInfo.ACTION_ARGUMENT_SELECTION_START_INT, start)
+            putInt(AccessibilityNodeInfo.ACTION_ARGUMENT_SELECTION_END_INT, end)
         }
-        return null
+        return node.performAction(AccessibilityNodeInfo.ACTION_SET_SELECTION, sel)
     }
 
     /**
-     * Like [replace], but only touches the words of [oldWords] that actually differ from
-     * [newWords] (found by trimming their common prefix and suffix): the field's whole text is
-     * still what SET_TEXT carries (Android has no narrower edit action), but the characters
-     * that are recomputed and spliced in are just that inner span, not the full old sentence -
-     * so a one-word correction cannot, for instance, clash with an edit made anywhere else in
-     * the words around it between the phrase being typed and the correction arriving.
+     * Rewrites characters [start, end) of [text] (the field's current text) as [new], keeping
+     * the cursor on the same text. A field that refuses SET_TEXT gets the span selected and
+     * then pasted over, or cut out when [new] is empty.
      */
-    private fun replaceDiff(oldWords: List<String>, newWords: List<String>): String? {
-        var prefix = 0
-        while (prefix < oldWords.size && prefix < newWords.size && oldWords[prefix] == newWords[prefix]) prefix++
-        var suffix = 0
-        while (suffix < oldWords.size - prefix && suffix < newWords.size - prefix &&
-            oldWords[oldWords.size - 1 - suffix] == newWords[newWords.size - 1 - suffix]
-        ) suffix++
-        // nothing actually differs
-        if (prefix + suffix >= oldWords.size && prefix + suffix >= newWords.size) return null
+    private fun splice(node: AccessibilityNodeInfo, text: String, start: Int, end: Int, new: String): Boolean {
+        val combined = text.substring(0, start) + new + text.substring(end)
+        val cursor = cursorOf(node, text)
+        val moved = when {
+            cursor >= end -> cursor + new.length - (end - start)
+            cursor > start -> start + new.length
+            else -> cursor
+        }
+        if (setText(node, combined, moved)) return true
+        if (!select(node, start, end)) return false
+        val cm = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+        val saved = runCatching { cm.primaryClip }.getOrNull()
+        val ok = if (new.isEmpty()) {
+            node.performAction(AccessibilityNodeInfo.ACTION_CUT)
+        } else {
+            cm.setPrimaryClip(ClipData.newPlainText("greek_vt", new))
+            node.performAction(AccessibilityNodeInfo.ACTION_PASTE)
+        }
+        if (saved != null) cm.setPrimaryClip(saved)
+        return ok
+    }
 
-        val oldFull = oldWords.joinToString(" ")
-        val newChanged = newWords.subList(prefix, newWords.size - suffix).joinToString(" ")
-        val prefixChars = oldWords.subList(0, prefix).joinToString(" ").length
-        val suffixChars = oldWords.subList(oldWords.size - suffix, oldWords.size).joinToString(" ").length
-        // the changed span's character bounds inside oldFull, spaces to its neighbours included
-        val start = if (prefix == 0) 0 else prefixChars + 1
-        val end = oldFull.length - if (suffix == 0) 0 else suffixChars + 1
+    /** Where [inj]'s text starts in [text]: its recorded place if it is still there, else its nearest copy; -1 if gone. */
+    private fun locate(text: String, inj: Injection): Int {
+        if (inj.text.isEmpty()) return -1
+        if (text.startsWith(inj.text, inj.at)) return inj.at
+        var best = -1
+        var i = text.indexOf(inj.text)
+        while (i >= 0) {
+            if (best < 0 || abs(i - inj.at) < abs(best - inj.at)) best = i
+            i = text.indexOf(inj.text, i + 1)
+        }
+        return best
+    }
 
-        for ((where, node) in listOf("focused" to focusedEditable(), "remembered" to rememberedEditable())) {
-            if (node == null || node.isShowingHintText) continue
-            val text = node.text?.toString() ?: continue
-            val at = text.lastIndexOf(oldFull)
+    /**
+     * Overwrites [inj]'s whole phrase with [new] in the field it went to (or, failing that, the
+     * focused or remembered one). [withSep]: its separator goes too, as for undo.
+     */
+    private fun rewrite(inj: Injection, new: String, withSep: Boolean): String? {
+        for ((where, node) in targets(inj.node)) {
+            val text = freshText(node) ?: continue
+            val at = locate(text, inj)
             if (at < 0) continue
-            val combined = text.substring(0, at + start) + newChanged + text.substring(at + end)
-            val cursor = node.textSelectionStart.takeIf { it in 0..text.length } ?: text.length
-            val moved = when {
-                cursor >= at + end -> cursor + combined.length - text.length
-                cursor > at + start -> at + start + newChanged.length
-                else -> cursor
-            }
-            if (setText(node, combined, moved)) return where
+            val start = if (withSep && inj.sep.isNotEmpty() && text.startsWith(inj.sep, at - inj.sep.length)) {
+                at - inj.sep.length
+            } else at
+            if (!splice(node, text, start, at + inj.text.length, new)) continue
+            inj.node = node
+            inj.at = at
+            inj.text = new
+            return where
         }
         return null
     }
@@ -179,30 +209,24 @@ class TypingAccessibilityService : AccessibilityService() {
     /** Text before the cursor of the field the result will go to; null if none or a hint. */
     private fun textBeforeCursor(): String? {
         val node = focusedEditable() ?: rememberedEditable() ?: return null
-        if (node.isShowingHintText || node.isPassword) return null
-        val text = node.text?.toString() ?: return null
-        val cursor = node.textSelectionStart.takeIf { it in 0..text.length } ?: text.length
-        return text.substring(0, cursor).takeLast(CONTEXT_CHARS)
+        if (node.isPassword) return null
+        val text = freshText(node)?.takeIf { it.isNotEmpty() } ?: return null
+        return text.substring(0, cursorOf(node, text)).takeLast(CONTEXT_CHARS)
     }
 
     private fun insert(text: String): String? {
-        for ((where, node) in listOf("focused" to focusedEditable(), "remembered" to rememberedEditable())) {
-            if (node == null) continue
+        for ((where, node) in targets()) {
             append(node, text)?.let { remember(it); return where }
-            if (paste(node, text)) { remember(text); return "$where/paste" }
+            val before = freshText(node) ?: ""
+            val cursor = cursorOf(node, before)
+            if (paste(node, text)) { remember(Injection(node, cursor, "", text)); return "$where/paste" }
         }
         return null
     }
 
-    private fun remember(piece: String) = synchronized(injected) {
-        injected.addLast(piece)
+    private fun remember(inj: Injection) = synchronized(injected) {
+        injected.addLast(inj)
         while (injected.size > UNDO_DEPTH) injected.removeFirst()
-    }
-
-    /** A phrase we typed was rewritten (word choice, late LLM answer): undo must remove the new words. */
-    private fun rememberReplaced(old: String, new: String) = synchronized(injected) {
-        val last = injected.lastOrNull() ?: return
-        if (last.endsWith(old)) injected[injected.size - 1] = last.dropLast(old.length) + new
     }
 
     private fun hasUndo() = synchronized(injected) { injected.isNotEmpty() }
@@ -212,10 +236,18 @@ class TypingAccessibilityService : AccessibilityService() {
      * cursor on the same text. A phrase no longer found (edited, or another field) is forgotten.
      */
     private fun undo(): String {
-        val piece = synchronized(injected) { injected.removeLastOrNull() } ?: return "nothing"
-        // the field may have trimmed the separator in front of it
-        val where = replace(piece, "") ?: piece.trimStart().takeIf { it != piece }?.let { replace(it, "") }
-        return if (where != null) "undone" else "missing"
+        val inj = synchronized(injected) { injected.removeLastOrNull() } ?: return "nothing"
+        return if (rewrite(inj, "", withSep = true) != null) "undone" else "missing"
+    }
+
+    /**
+     * Overwrites the phrase we typed as [old] with [new], all of it. Without a record of it
+     * (it went in by clipboard, or was forgotten) the last copy of [old] in the field is used.
+     */
+    private fun overwrite(old: String, new: String): String? {
+        val inj = synchronized(injected) { injected.lastOrNull { it.text == old } }
+            ?: Injection(null, Int.MAX_VALUE, "", old)
+        return rewrite(inj, new, withSep = false)
     }
 
     companion object {
@@ -237,7 +269,7 @@ class TypingAccessibilityService : AccessibilityService() {
          */
         fun undoLastInjection(): String {
             val s = instance ?: return "nothing"
-            val r = runCatching { s.undo() }.getOrDefault("missing")
+            val r = runCatching { s.undo() }.getOrElse { Log.w(TAG, "undo failed", it); "missing" }
             Log.i(TAG, "undo: $r")
             return r
         }
@@ -259,16 +291,20 @@ class TypingAccessibilityService : AccessibilityService() {
         }
 
         /**
-         * Changes text delivered earlier: [old] becomes [new] in the field it went to, or on
-         * the clipboard if it cannot be found there any more (unless [copyIfMissing] is off).
+         * Replaces a phrase typed earlier: the whole of [old] (exactly as it was delivered or
+         * last replaced) is selected in the field and overwritten with [new], never appended
+         * to. If it cannot be found any more, [new] goes to the clipboard unless
+         * [copyIfMissing] is off.
          */
-        fun replace(ctx: Context, old: String, new: String, copyIfMissing: Boolean = true): String {
+        fun replaceInjected(ctx: Context, old: String, new: String, copyIfMissing: Boolean = true): String {
             if (old.isBlank()) return deliver(ctx, new)
-            runCatching { instance?.replace(old, new) }.getOrNull()?.let {
-                instance?.rememberReplaced(old, new)
-                Log.i(TAG, "replaced via $it")
-                return "typed"
-            }
+            if (old == new) return "typed"
+            runCatching { instance?.overwrite(old, new) }
+                .onFailure { Log.w(TAG, "replace failed", it) }
+                .getOrNull()?.let {
+                    Log.i(TAG, "replaced via $it")
+                    return "typed"
+                }
             if (!copyIfMissing) {
                 Log.i(TAG, "typed text not found (edited or left the field), correction dropped")
                 return "missing"
@@ -276,30 +312,6 @@ class TypingAccessibilityService : AccessibilityService() {
             val cm = ctx.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
             cm.setPrimaryClip(ClipData.newPlainText("greek_vt", new))
             Log.i(TAG, "typed text not found, copied the correction to the clipboard")
-            return "clipboard"
-        }
-
-        /**
-         * Like [replace], but for a correction expressed as [oldWords] -> [newWords]: only the
-         * words that actually differ (the recognizer's own diff) are rewritten in the field,
-         * every matching word around them left exactly as it is.
-         */
-        fun replaceWords(ctx: Context, oldWords: List<String>, newWords: List<String>, copyIfMissing: Boolean = true): String {
-            if (oldWords.isEmpty()) return deliver(ctx, newWords.joinToString(" "))
-            if (oldWords == newWords) return "typed"
-            runCatching { instance?.replaceDiff(oldWords, newWords) }.getOrNull()?.let {
-                instance?.rememberReplaced(oldWords.joinToString(" "), newWords.joinToString(" "))
-                Log.i(TAG, "diff-replaced via $it")
-                return "typed"
-            }
-            if (!copyIfMissing) {
-                Log.i(TAG, "typed words not found (edited or left the field), correction dropped")
-                return "missing"
-            }
-            val text = newWords.joinToString(" ")
-            val cm = ctx.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-            cm.setPrimaryClip(ClipData.newPlainText("greek_vt", text))
-            Log.i(TAG, "typed words not found, copied the correction to the clipboard")
             return "clipboard"
         }
     }

@@ -515,7 +515,7 @@ class OverlayService : Service() {
         shapeInner(h, h, h / 2f, Gravity.END or Gravity.BOTTOM)
         dockTrack.visibility = View.VISIBLE
         undoButton.visibility = View.VISIBLE
-        undoButton.alpha = if (TypingAccessibilityService.canUndo) 1f else 0.45f
+        updateUndoButton()
 
         // the word-choice strip opens in the empty middle, between the two buttons
         val p = optionsProgress
@@ -714,8 +714,8 @@ class OverlayService : Service() {
             val picked = spot.options[i].words
             val words = c.words.subList(0, a) + picked + c.words.subList(b, c.words.size)
             val text = words.joinToString(" ")
-            // only the tapped word(s) are rewritten in the field, not the whole sentence
-            val where = TypingAccessibilityService.replaceWords(this, c.words, words)
+            // the sentence already in the field is overwritten as a whole, never appended to
+            val where = TypingAccessibilityService.replaceInjected(this, c.typed, text)
             if (where == "clipboard") toast("Αντιγράφηκε: $text")
             Log.i(TAG, "[choice] $where: ${c.typed} -> $text")
             c.shift += picked.size - (spot.end - spot.start)
@@ -924,6 +924,7 @@ class OverlayService : Service() {
         if (where != "typed") return
         // the person chose: a late LLM answer for this dictation must not overwrite it
         if (res != null) lastTyped = Typed(n, res, c.words).apply { decided = true }
+        updateUndoButton()
         showSatellite()
     }
 
@@ -1051,6 +1052,11 @@ class OverlayService : Service() {
             else -> toast("Τίποτα για αναίρεση")
         }
         if (docked) shapeBar()
+    }
+
+    /** The docked Undo button is dimmed while there is nothing of ours to take back. */
+    private fun updateUndoButton() {
+        undoButton.alpha = if (TypingAccessibilityService.canUndo) 1f else 0.45f
     }
 
     // ------------------------------------------------------------------ touch
@@ -1206,6 +1212,7 @@ class OverlayService : Service() {
             Log.i(TAG, "[$id] $where: $text (${res.inferenceMs} ms$via)")
             if (where != "typed") return@onSuccess
             lastTyped = Typed(n, res, words)
+            updateUndoButton()
             showSatellite()
             setLlmPending(waiting)
             offerChoices(words, text, res.candidates, forced = local.takeIf { it != words })
@@ -1227,8 +1234,7 @@ class OverlayService : Service() {
             else -> null
         }
         if (skip != null) { Log.i(TAG, "[late via $via] $skip"); return }
-        // only the words the LLM actually changed are rewritten, the rest of the sentence stays put
-        val where = TypingAccessibilityService.replaceWords(this, t.words, words, copyIfMissing = false)
+        val where = TypingAccessibilityService.replaceInjected(this, t.text, text, copyIfMissing = false)
         Log.i(TAG, "[late via $via] $where: ${t.text} -> $text")
         if (where != "typed") return
         lastTyped = Typed(n, t.res, words)
