@@ -6,6 +6,9 @@ import com.openhackathon.voicetotext.decoding.Candidate
 import com.openhackathon.voicetotext.decoding.WordChoices
 import com.openhackathon.voicetotext.llm.LlmCorrector
 import com.openhackathon.voicetotext.R
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import android.animation.ArgbEvaluator
 import android.animation.ValueAnimator
 import android.app.Notification
@@ -216,6 +219,7 @@ class OverlayService : Service() {
 
     override fun onDestroy() {
         running = false
+        readyFlow.value = false
         if (instance === this) instance = null
         colorAnim?.cancel(); pulseAnim?.cancel(); optionsAnim?.cancel()
         llmPool.shutdownNow()
@@ -339,6 +343,7 @@ class OverlayService : Service() {
     private fun setState(s: State) {
         if (state == s) return
         state = s
+        readyFlow.value = s != State.LOADING && s != State.ERROR
         colorAnim?.cancel()
         colorAnim = ValueAnimator.ofObject(argb, currentColor, s.color).apply {
             duration = 220
@@ -1327,6 +1332,9 @@ class OverlayService : Service() {
         /** How long the rectangle's orange Undo flash lasts before it reverts to the state colour. */
         private const val UNDO_FLASH_MS = 260L
         @Volatile var running = false
+        private val readyFlow = MutableStateFlow(false)
+        /** True once the bubble has its model loaded and can listen; false while loading, failed or off. */
+        val ready: StateFlow<Boolean> = readyFlow.asStateFlow()
         /** The running bubble, for push-to-talk from the accessibility service. */
         @Volatile var instance: OverlayService? = null
         /** A volume-key press (or its audio) shorter than this is not a dictation. */
