@@ -189,6 +189,13 @@ object Recognizer {
     fun omniLabelsFile(ctx: Context): File = File(filesRoot(ctx), "omni.labels.json")
     fun testWav(ctx: Context): File = File(filesRoot(ctx), "test.wav")
 
+    /**
+     * Dev-mode test recordings: <files>/samples/<name>.wav, and optionally <name>.txt with the
+     * sentence that was meant, e.g. a speaker's sentence their personal model never heard.
+     */
+    fun samples(ctx: Context): List<File> =
+        File(filesRoot(ctx), "samples").listFiles { f -> f.name.endsWith(".wav") }?.sortedBy { it.name } ?: emptyList()
+
     fun omniPresent(ctx: Context): Boolean = omniFile(ctx).exists() && omniLabelsFile(ctx).exists()
 
     /** Whether layer 1 can run: the downloaded model or the chosen personal one is there. */

@@ -29,6 +29,7 @@ import com.openhackathon.voicetotext.service.TypingAccessibilityService
 import com.openhackathon.voicetotext.ui.MainActions
 import com.openhackathon.voicetotext.ui.MainScreen
 import com.openhackathon.voicetotext.ui.PersonalChoice
+import com.openhackathon.voicetotext.ui.SampleChoice
 import com.openhackathon.voicetotext.ui.ScreenState
 import com.openhackathon.voicetotext.ui.TrainingScreen
 import com.openhackathon.voicetotext.ui.UserScreen
@@ -160,6 +161,11 @@ class MainActivity : ComponentActivity() {
             neuralMb = Recognizer.neuralSizeMb(this),
             personals = Recognizer.personalModels(this).map { PersonalChoice(it.key, it.title, it.sizeMb, it.info) },
             personalKey = Recognizer.selectedPersonal(this)?.key ?: "",
+            loadedModel = if (Recognizer.ready) Recognizer.label(null) else null,
+            samples = Recognizer.samples(this).map { f ->
+                val ref = File(f.parentFile, f.nameWithoutExtension + ".txt")
+                SampleChoice(f.path, f.nameWithoutExtension, if (ref.exists()) ref.readText().trim() else "")
+            },
             personalMissingMb = ModelDownloader.missingPersonal(this).sumOf { it.bytes } / 1_000_000,
             llmOn = LlmCorrector.enabled,
             llmProvider = LlmCorrector.provider,
@@ -240,6 +246,8 @@ class MainActivity : ComponentActivity() {
         }
 
         override fun runCheck() = this@MainActivity.runCheck()
+
+        override fun runSample(path: String) = this@MainActivity.runSample(File(path))
 
         override fun download() = startDownload()
 
@@ -333,6 +341,26 @@ class MainActivity : ComponentActivity() {
     }
 
     // ------------------------------------------------------------------ on-device check
+
+    /** A dev-mode test recording through the chosen model; the result shows under its button. */
+    private fun runSample(file: File) {
+        if (busy) return
+        lifecycleScope.launch {
+            busy = true
+            result = "..."
+            detail = ""
+            val ok = withContext(Dispatchers.Default) { Recognizer.load(this@MainActivity) }
+            if (!ok) { busy = false; result = Recognizer.lastError ?: "Αποτυχία φόρτωσης"; return@launch }
+            val wav = withContext(Dispatchers.IO) { AudioRecorder.readWav(file) }
+            val res = withContext(Dispatchers.Default) { Recognizer.recognize(wav, file.name) }
+            busy = false
+            val ref = File(file.parentFile, file.nameWithoutExtension + ".txt").takeIf { it.exists() }?.readText()?.trim()
+            result = res.text.ifBlank { "(δεν αναγνωρίστηκε τίποτα)" }
+            detail = listOfNotNull(ref?.let { "σωστό: $it" }, "μοντέλο: ${Recognizer.label(null)}, ${res.inferenceMs} ms")
+                .joinToString("\n")
+            tick++
+        }
+    }
 
     private fun runCheck() {
         lifecycleScope.launch {
