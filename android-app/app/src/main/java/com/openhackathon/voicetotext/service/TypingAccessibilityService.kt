@@ -6,6 +6,7 @@ import android.content.ClipboardManager
 import android.content.Context
 import android.os.Bundle
 import android.util.Log
+import android.view.KeyEvent
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
 import kotlin.math.abs
@@ -44,6 +45,17 @@ class TypingAccessibilityService : AccessibilityService() {
     override fun onServiceConnected() {
         instance = this
         Log.i(TAG, "connected")
+    }
+
+    /** Volume up/down are push-to-talk while the floating bubble is on (OverlayService.pushToTalk). */
+    override fun onKeyEvent(event: KeyEvent): Boolean {
+        if (event.keyCode != KeyEvent.KEYCODE_VOLUME_UP && event.keyCode != KeyEvent.KEYCODE_VOLUME_DOWN) return false
+        val bubble = OverlayService.instance ?: return false
+        return when (event.action) {
+            KeyEvent.ACTION_DOWN -> bubble.pushToTalk(down = true, repeat = event.repeatCount > 0)
+            KeyEvent.ACTION_UP -> bubble.pushToTalk(down = false, repeat = false)
+            else -> false
+        }
     }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {

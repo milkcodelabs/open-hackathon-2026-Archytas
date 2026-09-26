@@ -186,6 +186,7 @@ class OverlayService : Service() {
     override fun onCreate() {
         super.onCreate()
         running = true
+        instance = this
         startInForeground()
         wm = getSystemService(Context.WINDOW_SERVICE) as WindowManager
         buildBubble()
@@ -215,6 +216,7 @@ class OverlayService : Service() {
 
     override fun onDestroy() {
         running = false
+        if (instance === this) instance = null
         colorAnim?.cancel(); pulseAnim?.cancel(); optionsAnim?.cancel()
         llmPool.shutdownNow()
         main.removeCallbacks(imePoll)
@@ -1144,6 +1146,39 @@ class OverlayService : Service() {
         }
     }
 
+    /** When push-to-talk started the current recording (elapsed ms); 0 when it did not. */
+    private var pttSince = 0L
+
+    /**
+     * Push-to-talk with the volume keys, from [TypingAccessibilityService.onKeyEvent] (main
+     * thread): key down starts listening as a tap on the bubble does, key up recognises. A press
+     * shorter than [PTT_MIN_MS] is dropped. While the bubble is loading or failed the keys stay
+     * volume keys. Returns whether the key was used (then the volume does not change).
+     */
+    fun pushToTalk(down: Boolean, repeat: Boolean): Boolean {
+        if (state == State.LOADING || state == State.ERROR) return false
+        if (repeat) return true
+        if (down) {
+            if (state == State.IDLE) {
+                onTap()
+                if (state == State.LISTENING) pttSince = SystemClock.elapsedRealtime()
+            }
+        } else if (pttSince != 0L) {
+            val held = SystemClock.elapsedRealtime() - pttSince
+            pttSince = 0L
+            if (state == State.LISTENING) {
+                if (held >= PTT_MIN_MS) onTap()
+                else {
+                    runCatching { recorder.stop() }
+                    setState(State.IDLE)
+                    updateOptions()
+                    toast("Κράτα πατημένο το πλήκτρο έντασης όσο μιλάς.")
+                }
+            }
+        }
+        return true
+    }
+
     private fun onLongPress() {
         if (state != State.IDLE) return
         val f = Recognizer.testWav(this)
@@ -1289,5 +1324,9 @@ class OverlayService : Service() {
         /** How long the rectangle's orange Undo flash lasts before it reverts to the state colour. */
         private const val UNDO_FLASH_MS = 260L
         @Volatile var running = false
+        /** The running bubble, for push-to-talk from the accessibility service. */
+        @Volatile var instance: OverlayService? = null
+        /** A volume-key press shorter than this is not a dictation. */
+        private const val PTT_MIN_MS = 300L
     }
 }
