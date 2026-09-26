@@ -1,11 +1,14 @@
 package com.openhackathon.voicetotext.ui
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.waitForUpOrCancellation
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -20,7 +23,6 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.Text
@@ -30,12 +32,19 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -43,6 +52,7 @@ import com.openhackathon.voicetotext.R
 import com.openhackathon.voicetotext.models.ModelDownloader
 import com.openhackathon.voicetotext.ui.theme.Bg
 import com.openhackathon.voicetotext.ui.theme.Brand
+import com.openhackathon.voicetotext.ui.theme.Muted
 import com.openhackathon.voicetotext.ui.theme.Ok
 import com.openhackathon.voicetotext.ui.theme.OnBg
 import com.openhackathon.voicetotext.ui.theme.OnMuted
@@ -55,13 +65,21 @@ private const val MAX_FONT_SCALE = 1.15f
 /** How long the title must be held down to open dev mode. */
 private const val DEV_HOLD_MS = 6_000L
 
+/** Second colour of the brand gradient, and a lighter brand tone for text on the dark background. */
+private val Violet = Color(0xFF8B5CF6)
+private val BrandLight = Color(0xFF8FA0FF)
+/** The glow at the top of the screen. */
+private val BgTop = Color(0xFF1A2146)
+private val CardEdge = Color.White.copy(alpha = 0.06f)
+
 /**
  * What everyone sees: one screen that fits without scrolling, also with a large system font
- * and display size. The title, the permissions the floating button needs and the models on
- * first start, and at the bottom the switch that shows the button. The steps take only the
- * room between the title and the switch, so the switch is always on screen. Everything else
- * (models, layer 2, analysis, the in-app microphone) is dev mode, opened by holding the title
- * down for [DEV_HOLD_MS]; lifting or dragging earlier does nothing.
+ * and display size. A centred block with the brand mark, the title and the setup steps (the
+ * permissions the floating button needs, the models on first start), and at the bottom the
+ * switch that shows the button. The block takes only the room above the switch, so the switch
+ * is always on screen; the mark is dropped when that room is short. Everything else (models,
+ * layer 2, analysis, the in-app microphone) is dev mode, opened by holding the title down for
+ * [DEV_HOLD_MS]; lifting or dragging earlier does nothing.
  */
 @Composable
 fun UserScreen(state: ScreenState, actions: MainActions, onDevMode: () -> Unit) {
@@ -79,58 +97,110 @@ private fun UserContent(state: ScreenState, actions: MainActions, onDevMode: () 
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .background(Bg)
+            .background(Brush.verticalGradient(0f to BgTop, 0.5f to Bg))
             .safeDrawingPadding()
-            .padding(start = 18.dp, end = 18.dp, top = 16.dp, bottom = 6.dp),
+            .padding(start = 18.dp, end = 18.dp, top = 12.dp, bottom = 6.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
-        Text(
-            "Archytas Voice", fontSize = 30.sp, fontWeight = FontWeight.Bold, color = OnBg, maxLines = 1,
-            modifier = Modifier.pointerInput(Unit) {
-                awaitEachGesture {
-                    awaitFirstDown()
-                    // null only when the time runs out with the finger still down
-                    if (withTimeoutOrNull(DEV_HOLD_MS) { waitForUpOrCancellation(); true } == null) onDevMode()
+        BoxWithConstraints(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
+            val roomy = maxHeight > 600.dp
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                if (roomy) {
+                    BrandMark()
+                    Spacer(Modifier.height(18.dp))
                 }
-            },
-        )
-        Column(
-            modifier = Modifier.weight(1f).fillMaxWidth().padding(vertical = 12.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp, Alignment.CenterVertically),
-        ) {
-            Step(1, state.mic, "Μικρόφωνο", "Για να σε ακούει", "Άδεια") { actions.askMic() }
-            Step(2, state.overlay, "Πάνω από εφαρμογές", "Για το αιωρούμενο κουμπί", "Άδεια") { actions.openOverlaySettings() }
-            Step(3, state.accessibility, "Γράψιμο σε πεδία", "Γράφει όπου πατάς", "Άνοιγμα") { actions.openAccessibilitySettings() }
-            Step(
-                4, state.modelsComplete, "Μοντέλα φωνής",
-                when {
-                    state.modelsComplete -> "Δουλεύει χωρίς internet"
-                    p.running -> String.format(Locale.US, "Λήψη %d%%  ·  %d / %d MB", (p.fraction * 100).toInt(),
-                        p.bytesDone / 1_000_000, p.bytesTotal / 1_000_000)
-                    p.error != null -> "Η λήψη σταμάτησε, ξαναδοκίμασε"
-                    state.metered -> "${state.missingMb} MB, καλύτερα με Wi-Fi"
-                    else -> "${state.missingMb} MB, μία φορά"
-                },
-                if (p.running) null else "Λήψη",
-                progress = if (p.running) p.fraction else null,
-            ) { actions.download() }
+                Title(onDevMode)
+                Spacer(Modifier.height(if (roomy) 32.dp else 20.dp))
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Step(1, state.mic, "Μικρόφωνο", "Για να σε ακούει", "Άδεια") { actions.askMic() }
+                    Step(2, state.overlay, "Πάνω από εφαρμογές", "Για το αιωρούμενο κουμπί", "Άδεια") { actions.openOverlaySettings() }
+                    Step(3, state.accessibility, "Γράψιμο σε πεδία", "Γράφει όπου πατάς", "Άνοιγμα") { actions.openAccessibilitySettings() }
+                    Step(
+                        4, state.modelsComplete, "Μοντέλα φωνής",
+                        when {
+                            state.modelsComplete -> "Δουλεύει χωρίς internet"
+                            p.running -> String.format(Locale.US, "Λήψη %d%%  ·  %d / %d MB", (p.fraction * 100).toInt(),
+                                p.bytesDone / 1_000_000, p.bytesTotal / 1_000_000)
+                            p.error != null -> "Η λήψη σταμάτησε, ξαναδοκίμασε"
+                            state.metered -> "${state.missingMb} MB, καλύτερα με Wi-Fi"
+                            else -> "${state.missingMb} MB, μία φορά"
+                        },
+                        if (p.running) null else "Λήψη",
+                        progress = if (p.running) p.fraction else null,
+                    ) { actions.download() }
+                }
+            }
         }
         if (on) {
-            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(bottom = 8.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(bottom = 10.dp)) {
                 Box(Modifier.size(10.dp).clip(CircleShape).background(Ok))
                 Spacer(Modifier.width(8.dp))
                 Text("Ενεργό", fontSize = 16.sp, fontWeight = FontWeight.SemiBold, color = Ok)
             }
         }
-        Button(
-            onClick = { actions.toggleBubble() },
-            enabled = ready || on,
-            colors = ButtonDefaults.buttonColors(containerColor = if (on) SurfaceSoft else Brand),
-            modifier = Modifier.fillMaxWidth().height(64.dp),
-            shape = RoundedCornerShape(20.dp),
+        MainSwitch(on = on, enabled = ready || on) { actions.toggleBubble() }
+    }
+}
+
+/** The microphone in a gradient disc with a soft halo. */
+@Composable
+private fun BrandMark() {
+    Box(contentAlignment = Alignment.Center, modifier = Modifier.size(112.dp)) {
+        Box(Modifier.size(112.dp).alpha(0.16f).clip(CircleShape).background(Brush.linearGradient(listOf(Brand, Violet))))
+        Box(
+            contentAlignment = Alignment.Center,
+            modifier = Modifier.size(78.dp).clip(CircleShape).background(Brush.linearGradient(listOf(Brand, Violet))),
         ) {
-            Text(if (on) "Απενεργοποίηση" else "Ενεργοποίηση", fontSize = 20.sp, fontWeight = FontWeight.SemiBold, maxLines = 1)
+            Icon(painterResource(R.drawable.ic_mic), contentDescription = null, tint = OnBg, modifier = Modifier.size(38.dp))
         }
+    }
+}
+
+/** "Archytas Voice"; held down for [DEV_HOLD_MS] it opens dev mode. */
+@Composable
+private fun Title(onDevMode: () -> Unit) {
+    Text(
+        buildAnnotatedString {
+            append("Archytas ")
+            withStyle(SpanStyle(color = BrandLight)) { append("Voice") }
+        },
+        fontSize = 32.sp, fontWeight = FontWeight.Bold, color = OnBg, letterSpacing = 0.5.sp, maxLines = 1,
+        modifier = Modifier.pointerInput(Unit) {
+            awaitEachGesture {
+                awaitFirstDown()
+                // null only when the time runs out with the finger still down
+                if (withTimeoutOrNull(DEV_HOLD_MS) { waitForUpOrCancellation(); true } == null) onDevMode()
+            }
+        },
+    )
+}
+
+/** Shows or hides the floating button: brand gradient when it can be turned on, dark with a green edge when on. */
+@Composable
+private fun MainSwitch(on: Boolean, enabled: Boolean, onClick: () -> Unit) {
+    val shape = RoundedCornerShape(22.dp)
+    val fill = when {
+        on -> Brush.horizontalGradient(listOf(SurfaceSoft, SurfaceSoft))
+        enabled -> Brush.horizontalGradient(listOf(Brand, Violet))
+        else -> Brush.horizontalGradient(listOf(Surface, Surface))
+    }
+    val content = if (enabled) OnBg else Muted
+    Row(
+        horizontalArrangement = Arrangement.Center,
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(66.dp)
+            .clip(shape)
+            .background(fill)
+            .border(1.5.dp, if (on) Ok.copy(alpha = 0.7f) else Color.Transparent, shape)
+            .clickable(enabled = enabled, role = Role.Button, onClick = onClick),
+    ) {
+        Icon(painterResource(if (on) R.drawable.ic_stop else R.drawable.ic_mic), contentDescription = null,
+            tint = content, modifier = Modifier.size(24.dp))
+        Spacer(Modifier.width(10.dp))
+        Text(if (on) "Απενεργοποίηση" else "Ενεργοποίηση", fontSize = 20.sp, fontWeight = FontWeight.SemiBold,
+            color = content, maxLines = 1)
     }
 }
 
@@ -140,20 +210,26 @@ private fun Step(
     n: Int, ok: Boolean, title: String, why: String, button: String?,
     progress: Float? = null, onClick: () -> Unit,
 ) {
+    val shape = RoundedCornerShape(18.dp)
     Row(
         verticalAlignment = Alignment.CenterVertically,
         modifier = Modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(16.dp))
+            .clip(shape)
             .background(Surface)
+            .border(1.dp, CardEdge, shape)
             .padding(horizontal = 14.dp, vertical = 12.dp),
     ) {
         Box(
             contentAlignment = Alignment.Center,
-            modifier = Modifier.size(34.dp).clip(CircleShape).background(if (ok) Ok else SurfaceSoft),
+            modifier = Modifier
+                .size(34.dp)
+                .clip(CircleShape)
+                .background(if (ok) Ok else Color.Transparent)
+                .border(2.dp, if (ok) Ok else Brand, CircleShape),
         ) {
             if (ok) Icon(painterResource(R.drawable.ic_check), contentDescription = "έτοιμο", tint = OnBg, modifier = Modifier.size(20.dp))
-            else Text("$n", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = OnBg)
+            else Text("$n", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = BrandLight)
         }
         Spacer(Modifier.width(12.dp))
         Column(Modifier.weight(1f)) {
